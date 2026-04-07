@@ -10,14 +10,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
+from tools import TOOL_DECLARATIONS, TOOL_MAPPING
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging - DEBUG for our modules, INFO for everything else
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("gemini_live").setLevel(logging.DEBUG)
-logging.getLogger(__name__).setLevel(logging.DEBUG)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler("server.log", mode="w"),
+        logging.StreamHandler(),
+    ],
+)
+# Suppress the firehose of raw API responses
+logging.getLogger("gemini_live").setLevel(logging.INFO)
+logging.getLogger("tools").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -59,11 +68,14 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_bytes(data)
 
     async def audio_interrupt_callback():
-        # The event queue handles the JSON message, but we might want to do something else here
         pass
 
     gemini_client = GeminiLive(
-        api_key=GEMINI_API_KEY, model=MODEL, input_sample_rate=16000
+        api_key=GEMINI_API_KEY,
+        model=MODEL,
+        input_sample_rate=16000,
+        tools=TOOL_DECLARATIONS,
+        tool_mapping=TOOL_MAPPING,
     )
 
     async def receive_from_client():
@@ -102,7 +114,6 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_interrupt_callback=audio_interrupt_callback,
         ):
             if event:
-                # Forward events (transcriptions, etc) to client
                 await websocket.send_json(event)
 
     try:
@@ -112,7 +123,6 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in Gemini session: {type(e).__name__}: {e}\n{traceback.format_exc()}")
     finally:
         receive_task.cancel()
-        # Ensure websocket is closed if not already
         try:
             await websocket.close()
         except:
