@@ -1,17 +1,34 @@
 import asyncio
-import subprocess
-import uuid
-import threading
 import logging
+import os
+import subprocess
+import threading
+import uuid
+from pathlib import Path
 
+import yaml
 from google.genai import types
+
+from task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
+# --- Agent config ---
+AGENTS_CONFIG_PATH = Path(__file__).parent / "agents.yaml"
+
+
+def _load_agents() -> dict:
+    """Load agent definitions from agents.yaml."""
+    with open(AGENTS_CONFIG_PATH) as f:
+        return yaml.safe_load(f)["agents"]
+
+
+AGENTS = _load_agents()
+
 # --- Shared state for notification callback ---
-# Set by main.py at startup so background threads can notify the live session
 _event_loop: asyncio.AbstractEventLoop | None = None
 _notification_queue: asyncio.Queue | None = None
+task_manager = TaskManager()
 
 
 def set_notification_channel(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
@@ -20,14 +37,15 @@ def set_notification_channel(loop: asyncio.AbstractEventLoop, queue: asyncio.Que
     _event_loop = loop
     _notification_queue = queue
 
+    # Wire TaskManager notifications into the async queue
+    def _threadsafe_notify(message: str):
+        if _event_loop and _notification_queue:
+            _event_loop.call_soon_threadsafe(_notification_queue.put_nowait, message)
+            logger.info(f"Queued notification: {message[:100]}")
+        else:
+            logger.warning(f"No notification channel, dropping: {message[:100]}")
 
-def _notify(message: str):
-    """Thread-safe way to push a notification into the async queue."""
-    if _event_loop and _notification_queue:
-        _event_loop.call_soon_threadsafe(_notification_queue.put_nowait, message)
-        logger.info(f"Queued notification: {message[:100]}")
-    else:
-        logger.warning(f"No notification channel set, dropping: {message[:100]}")
+    task_manager.set_notify(_threadsafe_notify)
 
 
 # --- Tool Implementations ---
@@ -55,85 +73,154 @@ def run_bash(command: str) -> str:
         return f"Error: {e}"
 
 
-# --- Background Task Runner ---
+def ask_agent(agent: str, prompt: str) -> str:
+    """Route a prompt to an agent. All agents run async in the background.
 
-def _run_in_background(task_id: str, command: str):
-    """Runs a command in a background thread and notifies on completion."""
-    logger.info(f"Background task {task_id} started: {command}")
-    try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=120
-        )
-        output = result.stdout
-        if result.stderr:
-            output += "\nSTDERR: " + result.stderr
-        if result.returncode != 0:
-            output += f"\nExit code: {result.returncode}"
-        output = output or "(no output)"
-        logger.info(f"Background task {task_id} completed: {output[:200]}")
-        _notify(f"[Background task {task_id} completed] Command: {command}\nOutput: {output[:500]}")
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Background task {task_id} timed out after 120s")
-        _notify(f"[Background task {task_id} timed out] Command: {command} — exceeded 120s limit")
-    except Exception as e:
-        logger.error(f"Background task {task_id} error: {e}")
-        _notify(f"[Background task {task_id} failed] Command: {command}\nError: {e}")
-
-
-def dispatch_task(command: str) -> str:
-    """Spawn a background task to execute a bash command. Returns immediately with a task ID.
+    Returns immediately with a task ID. When the agent finishes, a notification
+    is sent with the result.
 
     Args:
-        command: The bash command to run in the background.
+        agent: The agent name to use (must match a key in agents.yaml).
+        prompt: The prompt or instruction to send to the agent.
     """
-    task_id = str(uuid.uuid4())[:8]
-    thread = threading.Thread(
-        target=_run_in_background,
-        args=(task_id, command),
-        daemon=True,
-    )
-    thread.start()
-    logger.info(f"Dispatched background task {task_id}: {command}")
-    return f"Task {task_id} started in background. Command: {command}"
+    if agent not in AGENTS:
+        available = ", ".join(AGENTS.keys())
+        return f"Unknown agent '{agent}'. Available: {available}"
+
+    config = AGENTS[agent]
+    command = config["command"].replace("{prompt}", prompt.replace("'", "'\\''"))
+    timeout = config.get("timeout", 120)
+
+    logger.info(f"ask_agent: agent={agent} prompt={prompt[:80]}")
+
+    task = task_manager.start(agent, command, timeout=timeout)
+    return f"Task {task.id} started. Agent: {agent}. You'll be notified when it completes."
 
 
-# --- Tool Schemas ---
+def list_tasks(status_filter: str = "") -> str:
+    """List tracked background tasks.
+
+    Args:
+        status_filter: Optional filter — 'running', 'completed', 'failed', 'timed_out', 'cancelled'.
+    """
+    tasks = task_manager.list_tasks(status_filter or None)
+    if not tasks:
+        return "No tasks"
+    lines = []
+    for t in tasks:
+        short_cmd = t["command"][:60]
+        if len(t["command"]) > 60:
+            short_cmd += "..."
+        lines.append(f"[{t['id']}] {t['status']} | {t['agent']} | {short_cmd}")
+    return "\n".join(lines)
+
+
+def cancel_task(task_id: str) -> str:
+    """Cancel a running background task.
+
+    Args:
+        task_id: The task ID to cancel.
+    """
+    return task_manager.cancel(task_id)
+
+
+# --- Build tool declarations dynamically from agents.yaml ---
+
+def _build_agent_descriptions() -> str:
+    """Build a description string listing available agents and when to use each."""
+    parts = []
+    for name, config in AGENTS.items():
+        desc = config.get("description", "").strip().replace("\n", " ")
+        parts.append(f"- {name}: {desc}")
+    return "\n".join(parts)
+
+
+_agent_descriptions = _build_agent_descriptions()
 
 bash_tool_declaration = types.FunctionDeclaration(
     name="run_bash",
-    description="Execute a bash shell command on the user's local machine and return the output. Use this to inspect files, run scripts, check system info, etc. Commands run with a 30 second timeout.",
+    description="Execute a bash shell command and return the output. Use for quick one-liners: checking files, system info, etc. 30s timeout.",
     parameters_json_schema={
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": "The bash command to run, e.g. 'ls ~/Desktop' or 'wc -l *.txt'",
+                "description": "The bash command to run",
             }
         },
         "required": ["command"],
     },
 )
 
-dispatch_task_declaration = types.FunctionDeclaration(
-    name="dispatch_task",
-    description="Spawn a background task to execute a bash command. Returns immediately with a task ID. When the task completes, its output is sent back as a notification. Use this for long-running tasks so the conversation can continue.",
+ask_agent_declaration = types.FunctionDeclaration(
+    name="ask_agent",
+    description=(
+        "Send a task to a specialist agent. Runs in the background, returns a task ID immediately. "
+        "You will receive a notification when the agent finishes.\n\n"
+        "Available agents:\n" + _agent_descriptions
+    ),
     parameters_json_schema={
         "type": "object",
         "properties": {
-            "command": {
+            "agent": {
                 "type": "string",
-                "description": "The bash command to run in the background, e.g. 'find / -name *.pdf 2>/dev/null > /tmp/pdfs.txt'",
+                "description": "Agent name to use: " + ", ".join(AGENTS.keys()),
+                "enum": list(AGENTS.keys()),
+            },
+            "prompt": {
+                "type": "string",
+                "description": "The prompt or instruction to send to the agent",
+            },
+        },
+        "required": ["agent", "prompt"],
+    },
+)
+
+list_tasks_declaration = types.FunctionDeclaration(
+    name="list_tasks",
+    description="List running and recent background tasks. Use when the user asks 'what's running' or 'status of my tasks'.",
+    parameters_json_schema={
+        "type": "object",
+        "properties": {
+            "status_filter": {
+                "type": "string",
+                "description": "Optional filter: running, completed, failed, timed_out, cancelled",
             }
         },
-        "required": ["command"],
+        "required": [],
+    },
+)
+
+cancel_task_declaration = types.FunctionDeclaration(
+    name="cancel_task",
+    description="Cancel a running background task by its ID.",
+    parameters_json_schema={
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": "The task ID to cancel",
+            }
+        },
+        "required": ["task_id"],
     },
 )
 
 
 # --- Aggregated lists for wiring into GeminiLive ---
 
-TOOL_DECLARATIONS = [types.Tool(function_declarations=[bash_tool_declaration, dispatch_task_declaration])]
+TOOL_DECLARATIONS = [
+    types.Tool(function_declarations=[
+        bash_tool_declaration,
+        ask_agent_declaration,
+        list_tasks_declaration,
+        cancel_task_declaration,
+    ])
+]
+
 TOOL_MAPPING = {
     "run_bash": run_bash,
-    "dispatch_task": dispatch_task,
+    "ask_agent": ask_agent,
+    "list_tasks": list_tasks,
+    "cancel_task": cancel_task,
 }

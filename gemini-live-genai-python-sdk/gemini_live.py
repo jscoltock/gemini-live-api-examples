@@ -39,7 +39,19 @@ class GeminiLive:
                     )
                 )
             ),
-            system_instruction=types.Content(parts=[types.Part(text="You are a helpful AI assistant. Keep your responses concise. Speak in a friendly Irish accent. You can see the user's camera or screen which is shared as realtime input images with you.\n\nYou have two tools:\n- run_bash: runs a command and returns the output immediately\n- dispatch_task: starts a long-running command in the background and returns a task ID\n\nTo ask a local AI model (ollama) a question, use:\n  dispatch_task(\"/Users/jscoltock/Desktop/projects/gemini-live-api-examples/gemini-live-genai-python-sdk/scripts/ask_ollama 'the question'\")\nThis runs the question against qwen3.5:9b-64K locally and returns just the answer text.\n\nWhen you receive a background task completion notification (messages starting with '[Background task'), you MUST tell the user:\n1. Which task completed (the task ID and command)\n2. The full output from the command\n3. Whether it succeeded or failed\nAlways read out the actual output — never just say 'task finished' without sharing the result.")]),
+            system_instruction=types.Content(parts=[types.Part(text=(
+                "You are a voice assistant. You do NOT answer questions yourself — you always delegate to agents.\n\n"
+                "Available tools:\n"
+                "- ask_agent: Send a task to a specialist agent. ALWAYS use this for any question or task.\n"
+                "- run_bash: Quick shell one-liners only (ls, cat, date, etc).\n"
+                "- list_tasks / cancel_task: Manage background tasks.\n\n"
+                "Rules:\n"
+                "- For ANY substantive question, use ask_agent with agent='ollama'.\n"
+                "- For coding/file tasks, use ask_agent with agent='claude-code'.\n"
+                "- Keep your own spoken responses very brief — just acknowledge and relay results.\n"
+                "- When a background task completes (notification starting with '[Task'), briefly tell the user the result.\n"
+                "- NEVER try to answer questions yourself. Always route to an agent."
+            ))]),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
@@ -105,6 +117,34 @@ class GeminiLive:
 
             event_queue = asyncio.Queue()
 
+            async def _handle_tool_call(tool_call):
+                """Process tool calls in a separate task so the receive loop keeps draining."""
+                function_responses = []
+                for fc in tool_call.function_calls:
+                    func_name = fc.name
+                    args = fc.args or {}
+                    
+                    if func_name in self.tool_mapping:
+                        try:
+                            tool_func = self.tool_mapping[func_name]
+                            if inspect.iscoroutinefunction(tool_func):
+                                result = await tool_func(**args)
+                            else:
+                                loop = asyncio.get_running_loop()
+                                result = await loop.run_in_executor(None, lambda: tool_func(**args))
+                        except Exception as e:
+                            result = f"Error: {e}"
+                        
+                        function_responses.append(types.FunctionResponse(
+                            name=func_name,
+                            id=fc.id,
+                            response={"result": result}
+                        ))
+                        await event_queue.put({"type": "tool_call", "name": func_name, "args": args, "result": result})
+                
+                if function_responses:
+                    await session.send_tool_response(function_responses=function_responses)
+
             async def receive_loop():
                 try:
                     while True:
@@ -147,30 +187,8 @@ class GeminiLive:
                                     await event_queue.put({"type": "interrupted"})
 
                             if tool_call:
-                                function_responses = []
-                                for fc in tool_call.function_calls:
-                                    func_name = fc.name
-                                    args = fc.args or {}
-                                    
-                                    if func_name in self.tool_mapping:
-                                        try:
-                                            tool_func = self.tool_mapping[func_name]
-                                            if inspect.iscoroutinefunction(tool_func):
-                                                result = await tool_func(**args)
-                                            else:
-                                                loop = asyncio.get_running_loop()
-                                                result = await loop.run_in_executor(None, lambda: tool_func(**args))
-                                        except Exception as e:
-                                            result = f"Error: {e}"
-                                        
-                                        function_responses.append(types.FunctionResponse(
-                                            name=func_name,
-                                            id=fc.id,
-                                            response={"result": result}
-                                        ))
-                                        await event_queue.put({"type": "tool_call", "name": func_name, "args": args, "result": result})
-                                
-                                await session.send_tool_response(function_responses=function_responses)
+                                # Fire and forget — lets receive loop keep draining
+                                asyncio.create_task(_handle_tool_call(tool_call))
                         
                         # session.receive() iterator ended (e.g. after turn_complete) — re-enter to keep listening
                         logger.debug("Gemini receive iterator completed, re-entering receive loop")
