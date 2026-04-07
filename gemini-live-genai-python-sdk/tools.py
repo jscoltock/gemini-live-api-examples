@@ -1,12 +1,34 @@
+import asyncio
 import subprocess
 import uuid
 import threading
 import logging
-from datetime import datetime
 
 from google.genai import types
 
 logger = logging.getLogger(__name__)
+
+# --- Shared state for notification callback ---
+# Set by main.py at startup so background threads can notify the live session
+_event_loop: asyncio.AbstractEventLoop | None = None
+_notification_queue: asyncio.Queue | None = None
+
+
+def set_notification_channel(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+    """Register the event loop and queue so background tasks can send notifications."""
+    global _event_loop, _notification_queue
+    _event_loop = loop
+    _notification_queue = queue
+
+
+def _notify(message: str):
+    """Thread-safe way to push a notification into the async queue."""
+    if _event_loop and _notification_queue:
+        _event_loop.call_soon_threadsafe(_notification_queue.put_nowait, message)
+        logger.info(f"Queued notification: {message[:100]}")
+    else:
+        logger.warning(f"No notification channel set, dropping: {message[:100]}")
+
 
 # --- Tool Implementations ---
 
@@ -36,7 +58,7 @@ def run_bash(command: str) -> str:
 # --- Background Task Runner ---
 
 def _run_in_background(task_id: str, command: str):
-    """Runs a command in a background thread. Result is logged but discarded (for now)."""
+    """Runs a command in a background thread and notifies on completion."""
     logger.info(f"Background task {task_id} started: {command}")
     try:
         result = subprocess.run(
@@ -47,11 +69,15 @@ def _run_in_background(task_id: str, command: str):
             output += "\nSTDERR: " + result.stderr
         if result.returncode != 0:
             output += f"\nExit code: {result.returncode}"
+        output = output or "(no output)"
         logger.info(f"Background task {task_id} completed: {output[:200]}")
+        _notify(f"[Background task {task_id} completed] Command: {command}\nOutput: {output[:500]}")
     except subprocess.TimeoutExpired:
         logger.warning(f"Background task {task_id} timed out after 120s")
+        _notify(f"[Background task {task_id} timed out] Command: {command} — exceeded 120s limit")
     except Exception as e:
         logger.error(f"Background task {task_id} error: {e}")
+        _notify(f"[Background task {task_id} failed] Command: {command}\nError: {e}")
 
 
 def dispatch_task(command: str) -> str:
@@ -90,7 +116,7 @@ bash_tool_declaration = types.FunctionDeclaration(
 
 dispatch_task_declaration = types.FunctionDeclaration(
     name="dispatch_task",
-    description="Spawn a background task to execute a bash command. Returns immediately with a task ID. The command runs asynchronously — use this for long-running tasks so the conversation can continue. The result is NOT returned to the conversation (for now). Use run_bash for quick commands where you need the result.",
+    description="Spawn a background task to execute a bash command. Returns immediately with a task ID. When the task completes, its output is sent back as a notification. Use this for long-running tasks so the conversation can continue.",
     parameters_json_schema={
         "type": "object",
         "properties": {

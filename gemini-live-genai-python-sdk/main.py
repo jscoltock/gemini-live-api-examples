@@ -10,12 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
-from tools import TOOL_DECLARATIONS, TOOL_MAPPING
+from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Configure logging — force=True to override any prior basicConfig
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -23,6 +23,7 @@ logging.basicConfig(
         logging.FileHandler("server.log", mode="w"),
         logging.StreamHandler(),
     ],
+    force=True,
 )
 # Suppress the firehose of raw API responses
 logging.getLogger("gemini_live").setLevel(logging.INFO)
@@ -106,13 +107,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     receive_task = asyncio.create_task(receive_from_client())
 
-    # TEST: Send a notification 15 seconds after connection
-    async def test_notification():
-        await asyncio.sleep(15)
-        logger.info("Sending test notification to notification_queue")
-        await notification_queue.put("[System notification: This is a test. Tell the user you received a system notification.]")
-
-    test_notify_task = asyncio.create_task(test_notification())
+    # Register notification channel so background tasks can notify the session
+    set_notification_channel(asyncio.get_running_loop(), notification_queue)
 
     async def run_session():
         async for event in gemini_client.start_session(
@@ -133,7 +129,6 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in Gemini session: {type(e).__name__}: {e}\n{traceback.format_exc()}")
     finally:
         receive_task.cancel()
-        test_notify_task.cancel()
         try:
             await websocket.close()
         except:

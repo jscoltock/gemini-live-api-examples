@@ -39,7 +39,7 @@ class GeminiLive:
                     )
                 )
             ),
-            system_instruction=types.Content(parts=[types.Part(text="You are a helpful AI assistant. Keep your responses concise. Speak in a friendly Irish accent. You can see the user's camera or screen which is shared as realtime input images with you.")]),
+            system_instruction=types.Content(parts=[types.Part(text="You are a helpful AI assistant. Keep your responses concise. Speak in a friendly Irish accent. You can see the user's camera or screen which is shared as realtime input images with you.\n\nYou have two tools:\n- run_bash: runs a command and returns the output immediately\n- dispatch_task: starts a long-running command in the background and returns a task ID\n\nWhen you receive a background task completion notification (messages starting with '[Background task'), you MUST tell the user:\n1. Which task completed (the task ID and command)\n2. The full output from the command\n3. Whether it succeeded or failed\nAlways read out the actual output — never just say 'task finished' without sharing the result.")]),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
