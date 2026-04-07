@@ -1,0 +1,14 @@
+#!/bin/bash
+# Ask a local ollama model a question and return just the response text
+# Usage: ask_ollama "your question" [model]
+MODEL="${2:-qwen3.5:9b-64K}"
+PROMPT="$1"
+
+if [ -z "$PROMPT" ]; then
+    echo "Usage: ask_ollama \"your question\" [model]"
+    exit 1
+fi
+
+curl -s http://localhost:11434/api/generate \
+  -d "{\"model\":\"$MODEL\",\"prompt\":\"$PROMPT\",\"stream\":false}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['response'])"
