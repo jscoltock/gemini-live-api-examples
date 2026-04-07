@@ -63,6 +63,7 @@ async def websocket_endpoint(websocket: WebSocket):
     audio_input_queue = asyncio.Queue()
     video_input_queue = asyncio.Queue()
     text_input_queue = asyncio.Queue()
+    notification_queue = asyncio.Queue()
 
     async def audio_output_callback(data):
         await websocket.send_bytes(data)
@@ -105,6 +106,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
     receive_task = asyncio.create_task(receive_from_client())
 
+    # TEST: Send a notification 15 seconds after connection
+    async def test_notification():
+        await asyncio.sleep(15)
+        logger.info("Sending test notification to notification_queue")
+        await notification_queue.put("[System notification: This is a test. Tell the user you received a system notification.]")
+
+    test_notify_task = asyncio.create_task(test_notification())
+
     async def run_session():
         async for event in gemini_client.start_session(
             audio_input_queue=audio_input_queue,
@@ -112,6 +121,7 @@ async def websocket_endpoint(websocket: WebSocket):
             text_input_queue=text_input_queue,
             audio_output_callback=audio_output_callback,
             audio_interrupt_callback=audio_interrupt_callback,
+            notification_queue=notification_queue,
         ):
             if event:
                 await websocket.send_json(event)
@@ -123,6 +133,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in Gemini session: {type(e).__name__}: {e}\n{traceback.format_exc()}")
     finally:
         receive_task.cancel()
+        test_notify_task.cancel()
         try:
             await websocket.close()
         except:

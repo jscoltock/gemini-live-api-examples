@@ -29,7 +29,7 @@ class GeminiLive:
         self.tools = tools or []
         self.tool_mapping = tool_mapping or {}
 
-    async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None):
+    async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None, notification_queue=None):
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             speech_config=types.SpeechConfig(
@@ -88,6 +88,20 @@ class GeminiLive:
                     logger.debug("send_text task cancelled")
                 except Exception as e:
                     logger.error(f"send_text error: {e}\n{traceback.format_exc()}")
+
+            async def send_notifications():
+                """Read from notification_queue and inject messages via realtime input."""
+                try:
+                    while True:
+                        msg = await notification_queue.get()
+                        if msg is None:
+                            break
+                        logger.info(f"Sending notification to Gemini: {msg}")
+                        await session.send_realtime_input(text=msg)
+                except asyncio.CancelledError:
+                    logger.debug("send_notifications task cancelled")
+                except Exception as e:
+                    logger.error(f"send_notifications error: {e}\n{traceback.format_exc()}")
 
             event_queue = asyncio.Queue()
 
@@ -173,6 +187,7 @@ class GeminiLive:
             send_audio_task = asyncio.create_task(send_audio())
             send_video_task = asyncio.create_task(send_video())
             send_text_task = asyncio.create_task(send_text())
+            notification_task = asyncio.create_task(send_notifications()) if notification_queue else None
             receive_task = asyncio.create_task(receive_loop())
 
             try:
@@ -190,6 +205,8 @@ class GeminiLive:
                 send_audio_task.cancel()
                 send_video_task.cancel()
                 send_text_task.cancel()
+                if notification_task:
+                    notification_task.cancel()
                 receive_task.cancel()
         except Exception as e:
             logger.error(f"Gemini Live session error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
