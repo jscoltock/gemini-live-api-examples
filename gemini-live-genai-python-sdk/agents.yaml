@@ -4,8 +4,7 @@
 # On failure (non-zero exit, timeout, empty output), the next fallback is tried.
 # system_prompt is always inherited from the agent level — fallbacks don't override it.
 #
-# Env vars in ${VAR} format are resolved at load time. If a var is missing,
-# that config entry is marked unavailable and skipped.
+# Auth: Claude Code uses its own config (~/.claude). Ollama is local. No keys here.
 
 agents:
   info:
@@ -21,9 +20,7 @@ agents:
     fallbacks:
       - backend: claude-code
         model: glm-5.1
-        timeout: 120
-        api_key: "${ZAI_API_KEY}"
-        base_url: "https://api.z.ai/v1"
+        timeout: 60
 
   personal-assistant:
     description: >
@@ -32,8 +29,6 @@ agents:
     backend: claude-code
     model: glm-5.1
     timeout: 120
-    api_key: "${ZAI_API_KEY}"
-    base_url: "https://api.z.ai/v1"
     system_prompt: >
       You are a helpful personal assistant. Be concise and practical.
       If you don't know something, say so. Prefer short answers over long ones.
@@ -50,8 +45,6 @@ agents:
     backend: claude-code
     model: glm-5.1
     timeout: 600
-    api_key: "${ZAI_API_KEY}"
-    base_url: "https://api.z.ai/v1"
     system_prompt: >
       You are a senior software engineer. Write clean, well-tested code.
       Prefer simple solutions over clever ones. Always explain your changes
@@ -68,8 +61,6 @@ agents:
     backend: claude-code
     model: glm-5.1
     timeout: 600
-    api_key: "${ZAI_API_KEY}"
-    base_url: "https://api.z.ai/v1"
     system_prompt: >
       You are a software architect. Focus on system design, trade-offs,
       and long-term maintainability. Don't write code unless asked —

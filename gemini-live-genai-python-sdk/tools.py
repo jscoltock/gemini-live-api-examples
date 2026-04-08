@@ -2,10 +2,8 @@ import asyncio
 import json
 import logging
 import os
-import re
 import shlex
 import subprocess
-import threading
 import uuid
 from pathlib import Path
 
@@ -20,37 +18,6 @@ logger = logging.getLogger(__name__)
 AGENTS_CONFIG_PATH = Path(__file__).parent / "agents.yaml"
 
 
-def _resolve_env(value):
-    """Resolve ${VAR} references in a string (or dict values). Returns None if var is missing."""
-    if isinstance(value, str):
-        missing = []
-        def _sub(m):
-            var = m.group(1)
-            val = os.environ.get(var)
-            if val is None:
-                missing.append(var)
-            return val or m.group(0)
-
-        resolved = re.sub(r'\$\{(\w+)\}', _sub, value)
-        if missing:
-            return None  # signal: this config is unavailable
-        return resolved
-
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if isinstance(v, str):
-                r = _resolve_env(v)
-                if r is None:
-                    return None  # whole config unavailable if any var missing
-                out[k] = r
-            else:
-                out[k] = v
-        return out
-
-    return value
-
-
 def _load_agents() -> dict:
     """Load agent definitions from agents.yaml."""
     with open(AGENTS_CONFIG_PATH) as f:
@@ -63,24 +30,19 @@ AGENTS = _load_agents()
 def _get_attempts(agent_config: dict) -> list[dict]:
     """
     Build the ordered list of configs to try: primary first, then fallbacks.
-    Each config is a fully self-contained dict with backend, model, timeout, etc.
+    Each config has backend, model, timeout only.
     system_prompt is NOT included — it lives at agent level only.
-    Configs with missing env vars are skipped.
     """
     attempts = []
 
-    # Primary config (everything except system_prompt and fallbacks)
+    # Primary config
     primary = {k: v for k, v in agent_config.items()
-               if k not in ("system_prompt", "fallbacks", "description")}
-    primary = _resolve_env(primary)
-    if primary is not None:
-        attempts.append(primary)
+               if k in ("backend", "model", "timeout")}
+    attempts.append(primary)
 
     # Fallbacks
     for fb in agent_config.get("fallbacks", []):
-        resolved = _resolve_env(dict(fb))
-        if resolved is not None:
-            attempts.append(resolved)
+        attempts.append({k: v for k, v in fb.items() if k in ("backend", "model", "timeout")})
 
     return attempts
 
@@ -111,21 +73,8 @@ def _build_command(config: dict, system_prompt: str, prompt: str) -> str:
     elif backend == "claude-code":
         cmd = f"claude --model {shlex.quote(model)}"
         cmd += " --dangerously-skip-permissions"
-
-        # Pass API key and base_url via env vars if provided
-        env_prefix = ""
-        api_key = config.get("api_key")
-        base_url = config.get("base_url")
-        env_vars = []
-        if api_key:
-            env_vars.append(f"ANTHROPIC_API_KEY={shlex.quote(api_key)}")
-        if base_url:
-            env_vars.append(f"ANTHROPIC_BASE_URL={shlex.quote(base_url)}")
-        if env_vars:
-            env_prefix = " ".join(env_vars) + " "
-
         cmd += f" -p {escaped_prompt}"
-        return env_prefix + cmd
+        return cmd
 
     else:
         raise ValueError(f"Unknown backend: {backend}")
