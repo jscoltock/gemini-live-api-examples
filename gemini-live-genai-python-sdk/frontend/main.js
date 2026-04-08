@@ -16,10 +16,14 @@ const videoPreview = document.getElementById("video-preview");
 const videoPlaceholder = document.getElementById("video-placeholder");
 const connectBtn = document.getElementById("connectBtn");
 const chatLog = document.getElementById("chat-log");
+const agentList = document.getElementById("agent-list");
 
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
 let voiceEnabled = false;
+let agentTasks = {};  // taskId -> {element, status, startTime}
+let agentConfigs = {};  // agent name -> {backend, model, timeout}
+let pollInterval = null;
 
 const mediaHandler = new MediaHandler();
 const geminiClient = new GeminiClient({
@@ -28,6 +32,17 @@ const geminiClient = new GeminiClient({
     statusDiv.className = "status connected";
     authSection.classList.add("hidden");
     appSection.classList.remove("hidden");
+
+    // Start polling for task status updates
+    pollInterval = setInterval(pollTasks, 2000);
+
+    // Fetch agent configs for display
+    fetch("/api/agents").then(r => r.json()).then(agents => {
+      agentConfigs = {};
+      for (const a of agents) {
+        agentConfigs[a.name] = a;
+      }
+    }).catch(() => {});
 
     // Send hidden instruction
     geminiClient.sendText(
@@ -54,6 +69,7 @@ const geminiClient = new GeminiClient({
     console.log("WS Closed:", e);
     statusDiv.textContent = "Disconnected";
     statusDiv.className = "status disconnected";
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     showSessionEnd();
   },
   onError: (e) => {
@@ -85,6 +101,16 @@ function handleJsonMessage(msg) {
     } else {
       currentGeminiMessageDiv = appendMessage("gemini", msg.text);
     }
+  } else if (msg.type === "tool_call") {
+    // Agent dispatched — create card in agent panel
+    if (msg.name === "ask_agent" && msg.args) {
+      const result = msg.result || "";
+      // Parse task ID from "Task abc123 started..."
+      const match = result.match(/Task (\w+) started/);
+      if (match) {
+        addAgentTask(match[1], msg.args.agent || "unknown", msg.args.prompt || "");
+      }
+    }
   }
 }
 
@@ -95,6 +121,119 @@ function appendMessage(type, text) {
   chatLog.appendChild(msgDiv);
   chatLog.scrollTop = chatLog.scrollHeight;
   return msgDiv;
+}
+
+// --- Agent Panel ---
+
+function addAgentTask(taskId, agent, prompt) {
+  const cfg = agentConfigs[agent] || {};
+  const meta = [];
+  if (cfg.model) meta.push(cfg.model);
+  if (cfg.timeout) meta.push(`${cfg.timeout}s`);
+
+  const card = document.createElement("div");
+  card.className = "agent-task running";
+  card.id = `task-${taskId}`;
+  card.innerHTML = `
+    <div>
+      <span class="task-agent">${escapeHtml(agent)}</span>
+      <span class="task-id">${taskId}</span>
+      <span class="task-status status-running">running</span>
+    </div>
+    <div class="task-meta">${escapeHtml(meta.join(" | "))}</div>
+    <div class="task-prompt">${escapeHtml(prompt)}</div>
+    <div class="task-time">${new Date().toLocaleTimeString()}</div>
+  `;
+  agentList.prepend(card);
+  agentTasks[taskId] = { element: card, status: "running", startTime: Date.now() };
+}
+
+function updateAgentTask(taskId, status, output) {
+  const task = agentTasks[taskId];
+  if (!task) {
+    // Task came from poll, create card
+    const card = document.createElement("div");
+    card.className = `agent-task ${status}`;
+    card.id = `task-${taskId}`;
+    agentList.prepend(card);
+    task = { element: card, status: status, startTime: Date.now() };
+    agentTasks[taskId] = task;
+  }
+
+  task.status = status;
+  const card = task.element;
+  card.className = `agent-task ${status}`;
+
+  // Update status badge
+  const statusEl = card.querySelector(".task-status");
+  if (statusEl) {
+    statusEl.className = `task-status status-${status}`;
+    statusEl.textContent = status;
+  }
+
+  // Show output if present
+  if (output) {
+    let outputEl = card.querySelector(".task-output");
+    if (!outputEl) {
+      outputEl = document.createElement("div");
+      card.appendChild(outputEl);
+    }
+    outputEl.className = "task-output";
+    outputEl.textContent = output.substring(0, 500);
+  }
+
+  // Show elapsed time
+  const elapsed = Math.round((Date.now() - task.startTime) / 1000);
+  const timeEl = card.querySelector(".task-time");
+  if (timeEl) {
+    timeEl.textContent = `${new Date().toLocaleTimeString()} (${elapsed}s)`;
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function pollTasks() {
+  try {
+    const res = await fetch("/api/tasks");
+    if (!res.ok) return;
+    const tasks = await res.json();
+    for (const t of tasks) {
+      const existing = agentTasks[t.id];
+      if (!existing || existing.status !== t.status) {
+        if (!existing) {
+          // New task from poll — create card with available info
+          const card = document.createElement("div");
+          card.className = `agent-task ${t.status}`;
+          card.id = `task-${t.id}`;
+          card.innerHTML = `
+            <div>
+              <span class="task-agent">${t.agent || "unknown"}</span>
+              <span class="task-id">${t.id}</span>
+              <span class="task-status status-${t.status}">${t.status}</span>
+            </div>
+            <div class="task-prompt">${escapeHtml((t.command || "").substring(0, 100))}</div>
+            <div class="task-time">${new Date().toLocaleTimeString()}</div>
+          `;
+          if (t.output) {
+            const outputEl = document.createElement("div");
+            outputEl.className = "task-output";
+            outputEl.textContent = t.output.substring(0, 500);
+            card.appendChild(outputEl);
+          }
+          agentList.prepend(card);
+          agentTasks[t.id] = { element: card, status: t.status, startTime: Date.now() };
+        } else {
+          updateAgentTask(t.id, t.status, t.output);
+        }
+      }
+    }
+  } catch (e) {
+    // Silently ignore — polling is best-effort
+  }
 }
 
 // Connect Button Handler
@@ -238,6 +377,8 @@ function resetUI() {
   cameraBtn.textContent = "Start Camera";
   screenBtn.textContent = "Share Screen";
   chatLog.innerHTML = "";
+  agentList.innerHTML = "";
+  agentTasks = {};
   connectBtn.disabled = false;
 }
 

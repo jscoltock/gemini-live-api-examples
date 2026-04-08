@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import os
+import shlex
 import subprocess
 import threading
 import uuid
@@ -24,6 +26,41 @@ def _load_agents() -> dict:
 
 
 AGENTS = _load_agents()
+
+
+def _build_command(config: dict, prompt: str) -> str:
+    """Build the shell command for an agent based on its backend type."""
+    backend = config["backend"].lower()
+    model = config.get("model", "")
+    system_prompt = config.get("system_prompt", "").strip()
+
+    # Combine system prompt + user prompt
+    if system_prompt:
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+    else:
+        full_prompt = prompt
+
+    # Escape for shell
+    escaped_prompt = shlex.quote(full_prompt)
+
+    if backend == "ollama":
+        # Use Ollama HTTP API directly (like scripts/ask_ollama did)
+        payload = json.dumps({"model": model, "prompt": full_prompt, "stream": False})
+        return (
+            f"curl -s http://localhost:11434/api/generate "
+            f"-d {shlex.quote(payload)} "
+            f"| python3 -c \"import sys,json; print(json.load(sys.stdin)['response'])\""
+        )
+
+    elif backend == "claude-code":
+        cmd = f"claude --model {shlex.quote(model)}"
+        cmd += " --dangerously-skip-permissions"
+        cmd += f" -p {escaped_prompt}"
+        return cmd
+
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
 
 # --- Shared state for notification callback ---
 _event_loop: asyncio.AbstractEventLoop | None = None
@@ -74,7 +111,7 @@ def run_bash(command: str) -> str:
 
 
 def ask_agent(agent: str, prompt: str) -> str:
-    """Route a prompt to an agent. All agents run async in the background.
+    """Route a prompt to a named agent. All agents run async in the background.
 
     Returns immediately with a task ID. When the agent finishes, a notification
     is sent with the result.
@@ -88,10 +125,10 @@ def ask_agent(agent: str, prompt: str) -> str:
         return f"Unknown agent '{agent}'. Available: {available}"
 
     config = AGENTS[agent]
-    command = config["command"].replace("{prompt}", prompt.replace("'", "'\\''"))
+    command = _build_command(config, prompt)
     timeout = config.get("timeout", 120)
 
-    logger.info(f"ask_agent: agent={agent} prompt={prompt[:80]}")
+    logger.info(f"ask_agent: agent={agent} backend={config['backend']} model={config.get('model','')} prompt={prompt[:80]}")
 
     task = task_manager.start(agent, command, timeout=timeout)
     return f"Task {task.id} started. Agent: {agent}. You'll be notified when it completes."
@@ -169,7 +206,7 @@ ask_agent_declaration = types.FunctionDeclaration(
             },
             "prompt": {
                 "type": "string",
-                "description": "The prompt or instruction to send to the agent",
+                "description": "The prompt or instruction to send to the agent. Include all relevant context from the conversation since the agent has no memory of previous turns.",
             },
         },
         "required": ["agent", "prompt"],

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
-from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel
+from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel, task_manager, AGENTS
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +52,26 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("frontend/index.html")
+
+
+@app.get("/api/tasks")
+async def get_tasks():
+    """Return current task list for the agent panel."""
+    return task_manager.list_tasks()
+
+
+@app.get("/api/agents")
+async def get_agents():
+    """Return agent configs (name, backend, model, timeout) for the UI."""
+    result = []
+    for name, config in AGENTS.items():
+        result.append({
+            "name": name,
+            "backend": config.get("backend", ""),
+            "model": config.get("model", ""),
+            "timeout": config.get("timeout", 120),
+        })
+    return result
 
 
 @app.websocket("/ws")

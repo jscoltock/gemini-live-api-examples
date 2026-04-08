@@ -1,24 +1,55 @@
 # Agent definitions for the Gemini Live voice shell
-# Each agent is a worker that handles specific types of tasks.
-# Gemini's only job is to listen, route work to these agents, and read back results.
+# Each agent is a named persona backed by either ollama or claude-code.
+# Gemini routes work to agents by name based on the task type.
 #
 # ALL agents run async — Gemini gets an immediate tool response and can speak
 # while the agent works. Results come back via notification.
 
 agents:
-  ollama:
+  info:
     description: >
-      General knowledge Q&A, explanations, analysis, brainstorming, summarization,
-      and any reasoning task that doesn't require file access or code execution.
-      Fast local model, good for quick answers.
-    command: "scripts/ask_ollama '{prompt}'"
+      General knowledge Q&A, Use as the default for any question or non-technical request that can be answered without a search.
+    backend: Ollama
+    model: qwen3.5:9b-64K
+    system_prompt: >
+      You are a helpful personal assistant. Be concise and practical.
+      If you don't know something, say so. Prefer short answers over long ones.
     timeout: 120
 
-  claude-code:
+  personal-assistant:
     description: >
-      Complex coding tasks: writing features, debugging, refactoring, multi-file edits,
-      git operations, project scaffolding, running tests, and any work that needs
-      file system access or shell commands. Autonomous agent with full tool access.
-      Use for anything that requires acting on the local filesystem or codebase.
-    command: "/opt/homebrew/bin/claude --dangerously-skip-permissions -p '{prompt}'"
+      Do the stuff a personal assistant would do. Help with all the google workspace tools - mail, calendar, contacts, etc. Make phone calls as well.
+    backend: claude-code
+    model: glm-5.1
+    system_prompt: >
+      You are a helpful personal assistant. Be concise and practical.
+      If you don't know something, say so. Prefer short answers over long ones.
+    timeout: 120
+
+  coder:
+    description: >
+      Software engineering: writing features, debugging, refactoring,
+      multi-file edits, git operations, running tests, project scaffolding.
+      Full filesystem and shell access. Use for anything that requires
+      reading, writing, or executing code.
+    backend: claude-code
+    model: glm-5.1
+    system_prompt: >
+      You are a senior software engineer. Write clean, well-tested code.
+      Prefer simple solutions over clever ones. Always explain your changes
+      briefly before making them.
+    timeout: 600
+
+  architect:
+    description: >
+      High-level software architecture decisions, system design, technology
+      selection, code review, and planning. Use when the task needs deep
+      thinking about structure, trade-offs, or design patterns rather than
+      just writing code.
+    backend: claude-code
+    model: glm-5.1
+    system_prompt: >
+      You are a software architect. Focus on system design, trade-offs,
+      and long-term maintainability. Don't write code unless asked —
+      instead describe approaches, compare options, and recommend directions.
     timeout: 600
