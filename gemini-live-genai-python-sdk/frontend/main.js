@@ -128,6 +128,7 @@ function appendMessage(type, text) {
 function addAgentTask(taskId, agent, prompt) {
   const cfg = agentConfigs[agent] || {};
   const meta = [];
+  if (cfg.backend) meta.push(cfg.backend);
   if (cfg.model) meta.push(cfg.model);
   if (cfg.timeout) meta.push(`${cfg.timeout}s`);
 

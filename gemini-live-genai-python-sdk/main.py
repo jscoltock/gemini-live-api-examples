@@ -70,6 +70,7 @@ async def get_agents():
             "backend": config.get("backend", ""),
             "model": config.get("model", ""),
             "timeout": config.get("timeout", 120),
+            "description": config.get("description", "").strip().replace("\n", " "),
         })
     return result
 
