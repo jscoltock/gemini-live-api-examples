@@ -1,0 +1,7 @@
+Don't call gemini at all if not needed (no voice, VAD, images etc)
+add upload images and or files
+add model and timeout to right pane 
+add util to edit agents instead of manually editing yaml file
+deal with concurrency limits on z.ai models
+add fallback configurations
+use smaller gemini live model
