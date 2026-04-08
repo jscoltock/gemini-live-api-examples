@@ -118,7 +118,17 @@ def run_bash(command: str) -> str:
         )
         output = result.stdout
         if result.stderr:
-            output += "\nSTDERR: " + result.stderr
+            noisy = [
+                "Warning: no stdin data received",
+                "proceeding without it",
+                "redirect stdin explicitly",
+            ]
+            filtered = "\n".join(
+                line for line in result.stderr.strip().splitlines()
+                if not any(n in line for n in noisy)
+            )
+            if filtered.strip():
+                output += "\nSTDERR: " + filtered
         if result.returncode != 0:
             output += f"\nExit code: {result.returncode}"
         return output or "(no output)"

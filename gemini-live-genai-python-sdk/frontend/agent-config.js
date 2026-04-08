@@ -17,7 +17,9 @@ const AgentConfigUI = (() => {
 
   const BACKENDS = ["ollama", "claude-code"];
   let agents = [];
+  let geminiConfig = null;
   let editingName = null; // which agent is currently in form mode (null = none)
+  let editingGemini = false; // is the gemini config in edit mode?
 
   // --- Panel open/close ---
 
@@ -29,6 +31,7 @@ const AgentConfigUI = (() => {
   function close() {
     overlay.classList.add("hidden");
     editingName = null;
+    editingGemini = false;
   }
 
   configBtn.addEventListener("click", open);
@@ -41,9 +44,15 @@ const AgentConfigUI = (() => {
 
   async function loadAgents() {
     try {
-      const res = await fetch("/api/agents");
-      if (!res.ok) throw new Error("Failed to load agents");
-      agents = await res.json();
+      const [agentsRes, geminiRes] = await Promise.all([
+        fetch("/api/agents"),
+        fetch("/api/gemini-config"),
+      ]);
+      if (!agentsRes.ok) throw new Error("Failed to load agents");
+      agents = await agentsRes.json();
+      if (geminiRes.ok) {
+        geminiConfig = await geminiRes.json();
+      }
       editingName = null;
       render();
     } catch (e) {
@@ -56,8 +65,13 @@ const AgentConfigUI = (() => {
   function render() {
     listEl.innerHTML = "";
 
+    // Gemini Live config section (read-only)
+    if (geminiConfig) {
+      listEl.appendChild(renderGeminiConfig());
+    }
+
     if (agents.length === 0 && editingName !== "__new__") {
-      listEl.innerHTML = `<div class="config-card"><p style="color:var(--text-secondary)">No agents configured. Click "+ New Agent" to add one.</p></div>`;
+      listEl.innerHTML += `<div class="config-card"><p style="color:var(--text-secondary)">No agents configured. Click "+ New Agent" to add one.</p></div>`;
     }
 
     for (const agent of agents) {
@@ -116,6 +130,102 @@ const AgentConfigUI = (() => {
 
     card.querySelector('[data-action="delete"]').addEventListener("click", () => {
       showDeleteConfirm(card, agent.name);
+    });
+
+    return card;
+  }
+
+  function renderGeminiConfig() {
+    if (editingGemini) {
+      return renderGeminiForm();
+    }
+
+    const card = document.createElement("div");
+    card.className = "config-card gemini-config-card";
+
+    // Show a short preview (first 3 lines)
+    const lines = (geminiConfig.system_prompt || "").split("\n");
+    const preview = lines.slice(0, 3).join("\n");
+    const truncated = lines.length > 3;
+
+    card.innerHTML = `
+      <div class="config-card-header">
+        <span class="config-card-name gemini-label">Gemini Live Session</span>
+        <div class="config-card-actions">
+          <button class="gemini-edit-btn">Edit</button>
+        </div>
+      </div>
+      <div class="config-card-meta" style="margin-top:0.35rem">
+        <span>Model: <strong>${esc(geminiConfig.model)}</strong></span>
+        <span>Voice: <strong>${esc(geminiConfig.voice)}</strong></span>
+      </div>
+      <div class="gemini-prompt-preview">
+        <span class="gemini-prompt-preview-label">System Prompt</span>
+        <pre class="gemini-prompt-pre-collapsed">${esc(preview || "(none)")}${truncated ? "\n..." : ""}</pre>
+      </div>
+    `;
+
+    card.querySelector(".gemini-edit-btn").addEventListener("click", () => {
+      editingGemini = true;
+      render();
+    });
+
+    return card;
+  }
+
+  function renderGeminiForm() {
+    const card = document.createElement("div");
+    card.className = "config-card gemini-config-card gemini-editing";
+
+    card.innerHTML = `
+      <div class="config-card-header">
+        <span class="config-card-name gemini-label">Gemini Live Session</span>
+        <span class="badge gemini-badge">editing</span>
+      </div>
+      <div class="config-card-meta" style="margin-top:0.35rem;margin-bottom:0.5rem">
+        <span>Model: <strong>${esc(geminiConfig.model)}</strong></span>
+        <span>Voice: <strong>${esc(geminiConfig.voice)}</strong></span>
+      </div>
+      <div class="gemini-edit-note">Changes take effect on the next session (reconnect).</div>
+      <div class="form-group">
+        <label>System Prompt</label>
+        <textarea id="geminiPromptEdit" class="tall gemini-prompt-textarea">${esc(geminiConfig.system_prompt || "")}</textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-cancel" id="geminiCancelBtn">Cancel</button>
+        <button type="button" class="btn" id="geminiSaveBtn">Save Prompt</button>
+      </div>
+    `;
+
+    card.querySelector("#geminiCancelBtn").addEventListener("click", () => {
+      editingGemini = false;
+      render();
+    });
+
+    card.querySelector("#geminiSaveBtn").addEventListener("click", async () => {
+      const textarea = card.querySelector("#geminiPromptEdit");
+      const prompt = textarea.value.trim();
+
+      try {
+        const res = await fetch("/api/gemini-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ system_prompt: prompt }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          toast(data.error || "Save failed", "error");
+          return;
+        }
+
+        geminiConfig = await res.json();
+        editingGemini = false;
+        toast("Gemini system prompt saved", "success");
+        render();
+      } catch (e) {
+        toast("Save failed: " + e.message, "error");
+      }
     });
 
     return card;

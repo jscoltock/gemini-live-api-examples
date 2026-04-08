@@ -149,7 +149,18 @@ class TaskManager:
 
             output = stdout or ""
             if stderr:
-                output += "\nSTDERR: " + stderr
+                # Filter out known noisy warnings from agent CLIs
+                noisy = [
+                    "Warning: no stdin data received",
+                    "proceeding without it",
+                    "redirect stdin explicitly",
+                ]
+                filtered = "\n".join(
+                    line for line in stderr.strip().splitlines()
+                    if not any(n in line for n in noisy)
+                )
+                if filtered.strip():
+                    output += "\nSTDERR: " + filtered
             if proc.returncode != 0:
                 output += f"\nExit code: {proc.returncode}"
 

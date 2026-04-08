@@ -30,33 +30,21 @@ class GeminiLive:
         self.tool_mapping = tool_mapping or {}
 
     async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None, notification_queue=None):
+        import agent_config
+        gemini_cfg = agent_config.get_gemini_session()
+        system_prompt = gemini_cfg.get("system_prompt", "")
+        voice_name = gemini_cfg.get("voice", "Puck")
+
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Puck"
+                        voice_name=voice_name
                     )
                 )
             ),
-            system_instruction=types.Content(parts=[types.Part(text=(
-                "You are a voice assistant. You do NOT answer questions yourself — you always delegate to agents.\n\n"
-                "Available agents (use EXACTLY these names):\n"
-                "- info: General Q&A, quick answers without search. Fast local model.\n"
-                "- personal-assistant: General knowledge, analysis, brainstorming, summaries.\n"
-                "- coder: Writing code, debugging, refactoring, file operations, running tests.\n"
-                "- architect: System design, code review, architecture decisions, planning.\n\n"
-                "Available tools:\n"
-                "- ask_agent: Send a task to one of the agents above.\n"
-                "- run_bash: Quick shell one-liners only (ls, cat, date, etc).\n"
-                "- list_tasks / cancel_task: Manage background tasks.\n\n"
-                "Rules:\n"
-                "- For ANY substantive question, use ask_agent with the appropriate agent name.\n"
-                "- Keep your own spoken responses very brief — just acknowledge and relay results.\n"
-                "- When a background task completes (notification starting with '[Task'), briefly tell the user the result.\n"
-                "- NEVER try to answer questions yourself. Always route to an agent.\n"
-                "- When calling ask_agent, ALWAYS include all relevant context from the conversation in the prompt parameter. The agent has no memory of previous turns."
-            ))]),
+            system_instruction=types.Content(parts=[types.Part(text=system_prompt)]) if system_prompt else None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
@@ -162,8 +150,40 @@ class GeminiLive:
                             if response.session_resumption_update:
                                 logger.info(f"Session resumption update: {response.session_resumption_update}")
                             
+                            # Capture usage metadata
+                            usage = response.usage_metadata
+                            
                             server_content = response.server_content
                             tool_call = response.tool_call
+                            
+                            if usage:
+                                usage_data = {}
+                                if usage.prompt_token_count is not None:
+                                    usage_data["prompt_token_count"] = usage.prompt_token_count
+                                if usage.response_token_count is not None:
+                                    usage_data["response_token_count"] = usage.response_token_count
+                                if usage.total_token_count is not None:
+                                    usage_data["total_token_count"] = usage.total_token_count
+                                if usage.cached_content_token_count is not None:
+                                    usage_data["cached_content_token_count"] = usage.cached_content_token_count
+                                if usage.thoughts_token_count is not None:
+                                    usage_data["thoughts_token_count"] = usage.thoughts_token_count
+                                # Include modality breakdown if available
+                                if usage.prompt_tokens_details:
+                                    usage_data["prompt_tokens_details"] = [
+                                        {"modality": d.modality, "token_count": d.token_count}
+                                        for d in usage.prompt_tokens_details
+                                        if d.token_count
+                                    ]
+                                if usage.response_tokens_details:
+                                    usage_data["response_tokens_details"] = [
+                                        {"modality": d.modality, "token_count": d.token_count}
+                                        for d in usage.response_tokens_details
+                                        if d.token_count
+                                    ]
+                                if usage_data:
+                                    logger.info(f"Usage metadata: {usage_data}")
+                                    await event_queue.put({"type": "usage", "usage": usage_data})
                             
                             if server_content:
                                 if server_content.model_turn:

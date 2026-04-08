@@ -954,3 +954,148 @@ input[type="text"] {
 .form-errors li {
   margin-bottom: 0.15rem;
 }
+
+/* ===== Usage Panel (compact, inside left panel) ===== */
+.usage-panel {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-color);
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.usage-panel-header {
+  padding: 0.35rem 0.65rem;
+  font-weight: 700;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-color);
+}
+
+.usage-body {
+  padding: 0.4rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.usage-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.usage-row .usage-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.usage-label {
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.usage-value {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
+.usage-stat.usage-cost .usage-value {
+  color: #1e8e3e;
+  font-weight: 700;
+}
+
+/* ===== Gemini Live Config Card (in slide panel) ===== */
+.gemini-config-card {
+  border-left: 3px solid #7c4dff;
+}
+
+.gemini-label {
+  color: #7c4dff !important;
+}
+
+.gemini-badge {
+  background: #ede7f6 !important;
+  color: #7c4dff !important;
+}
+
+.gemini-prompt-preview {
+  margin-top: 0.5rem;
+}
+
+.gemini-prompt-preview-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 0.2rem;
+}
+
+.gemini-prompt-pre-collapsed {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-color);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  max-height: 4.5em;
+  overflow: hidden;
+}
+
+.gemini-edit-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.gemini-edit-btn:hover {
+  background: var(--bg-color);
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.gemini-editing {
+  border-left-color: #ff9800;
+}
+
+.gemini-editing .gemini-badge {
+  background: #fff3e0 !important;
+  color: #e65100 !important;
+}
+
+.gemini-edit-note {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-color);
+  border-radius: 4px;
+}
+
+.gemini-prompt-textarea {
+  font-family: monospace !important;
+  font-size: 0.8rem !important;
+  line-height: 1.5 !important;
+  min-height: 280px !important;
+}

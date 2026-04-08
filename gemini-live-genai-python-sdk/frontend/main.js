@@ -24,6 +24,7 @@ let voiceEnabled = false;
 let agentTasks = {};  // taskId -> {element, status, startTime}
 let agentConfigs = {};  // agent name -> {backend, model, timeout}
 let pollInterval = null;
+let usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: "--" };
 
 const mediaHandler = new MediaHandler();
 const geminiClient = new GeminiClient({
@@ -43,6 +44,16 @@ const geminiClient = new GeminiClient({
         agentConfigs[a.name] = a;
       }
     }).catch(() => {});
+
+    // Fetch Gemini config (model name) for usage panel
+    fetch("/api/gemini-config").then(r => r.json()).then(cfg => {
+      usageData.model = cfg.model || "--";
+      updateUsagePanel();
+    }).catch(() => {});
+
+    // Reset usage counters
+    usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: usageData.model };
+    updateUsagePanel();
 
     // Send hidden instruction
     geminiClient.sendText(
@@ -87,6 +98,8 @@ function handleJsonMessage(msg) {
   } else if (msg.type === "turn_complete") {
     currentGeminiMessageDiv = null;
     currentUserMessageDiv = null;
+    usageData.turns = (usageData.turns || 0) + 1;
+    updateUsagePanel();
   } else if (msg.type === "user") {
     if (currentUserMessageDiv) {
       currentUserMessageDiv.textContent += msg.text;
@@ -111,6 +124,13 @@ function handleJsonMessage(msg) {
         addAgentTask(match[1], msg.args.agent || "unknown", msg.args.prompt || "");
       }
     }
+  } else if (msg.type === "usage") {
+    // Update usage from WebSocket events
+    const u = msg.usage || {};
+    usageData.prompt_tokens = u.prompt_token_count || usageData.prompt_tokens;
+    usageData.response_tokens = u.response_token_count || usageData.response_tokens;
+    usageData.total_tokens = u.total_token_count || usageData.total_tokens;
+    updateUsagePanel();
   }
 }
 
@@ -195,6 +215,30 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// --- Usage Panel ---
+
+function formatNumber(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+function updateUsagePanel() {
+  const el = (id) => document.getElementById(id);
+  const input = usageData.prompt_tokens || 0;
+  const output = usageData.response_tokens || 0;
+  const total = usageData.total_tokens || 0;
+
+  // Rough cost estimate: $0.30/M input, $2.50/M output (Flash Live rates)
+  const cost = (input * 0.30 + output * 2.50) / 1_000_000;
+
+  el("usage-model").textContent = usageData.model || "--";
+  el("usage-turns").textContent = usageData.turns || 0;
+  el("usage-input").textContent = formatNumber(input);
+  el("usage-output").textContent = formatNumber(output);
+  el("usage-cost").textContent = "$" + cost.toFixed(4);
 }
 
 async function pollTasks() {

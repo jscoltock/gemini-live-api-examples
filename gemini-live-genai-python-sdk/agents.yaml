@@ -1,71 +1,108 @@
-# Agent definitions for the Gemini Live voice shell
-#
-# Each agent has a primary config and an optional fallbacks list.
-# On failure (non-zero exit, timeout, empty output), the next fallback is tried.
-# system_prompt is always inherited from the agent level — fallbacks don't override it.
-#
-# Auth: Claude Code uses its own config (~/.claude). Ollama is local. No keys here.
+gemini_session:
+  model: gemini-3.1-flash-live-preview
+  voice: Puck
+  system_prompt: 'You are a voice assistant. You do NOT answer questions yourself
+    — you always delegate to agents.
 
+
+    Available agents (use EXACTLY these names):
+
+    - info: General Q&A, quick answers without search. Fast local model.
+
+    - personal-assistant: General knowledge, analysis, brainstorming, summaries.
+
+    - coder: Writing code, debugging, refactoring, file operations, running tests.
+
+    - architect: System design, code review, architecture decisions, planning.
+
+
+    Available tools:
+
+    - ask_agent: Send a task to one of the agents above.
+
+    - run_bash: Quick shell one-liners only (ls, cat, date, etc).
+
+    - list_tasks / cancel_task: Manage background tasks.
+
+
+    Rules:
+
+    - For ANY substantive question, use ask_agent with the appropriate agent name.
+
+    - Keep your own spoken responses very brief — just acknowledge and relay results.
+
+    - When a background task completes (notification starting with ''[Task''), briefly
+    tell the user the result.
+
+    - NEVER try to answer questions yourself. Always route to an agent.
+
+    - When calling ask_agent, ALWAYS include all relevant context from the conversation
+    in the prompt parameter. The agent has no memory of previous turns.'
 agents:
   info:
-    description: >
-      General knowledge Q&A. Use as the default for any question or
-      non-technical request that can be answered without a search.
+    description: 'General knowledge Q&A. Use as the default for any question or non-technical
+      request that can be answered without a search.
+
+      '
     backend: ollama
     model: qwen3.5:9b-64K
     timeout: 120
-    system_prompt: >
-      You are a helpful personal assistant. Be concise and practical.
-      If you don't know something, say so. Prefer short answers over long ones.
-    fallbacks:
-      - backend: claude-code
-        model: glm-5.1
-        timeout: 60
+    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
+      If you don''t know something, say so. Prefer short answers over long ones.
 
+      '
+    fallbacks:
+    - backend: claude-code
+      model: glm-5.1
+      timeout: 60
   personal-assistant:
-    description: >
-      Do the stuff a personal assistant would do. Help with all the
-      google workspace tools - mail, calendar, contacts, etc.
+    description: 'Do the stuff a personal assistant would do. Help with all the google
+      workspace tools - mail, calendar, contacts, etc.
+
+      '
     backend: claude-code
     model: glm-5.1
     timeout: 120
-    system_prompt: >
-      You are a helpful personal assistant. Be concise and practical.
-      If you don't know something, say so. Prefer short answers over long ones.
-    fallbacks:
-      - backend: ollama
-        model: qwen3.5:9b-64K
-        timeout: 120
+    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
+      If you don''t know something, say so. Prefer short answers over long ones.
 
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
   coder:
-    description: >
-      Software engineering: writing features, debugging, refactoring,
-      multi-file edits, git operations, running tests, project scaffolding.
-      Full filesystem and shell access.
-    backend: claude-code
-    model: glm-5.1
-    timeout: 600
-    system_prompt: >
-      You are a senior software engineer. Write clean, well-tested code.
-      Prefer simple solutions over clever ones. Always explain your changes
-      briefly before making them.
-    fallbacks:
-      - backend: ollama
-        model: qwen3.5:9b-64K
-        timeout: 120
+    description: 'Software engineering: writing features, debugging, refactoring,
+      multi-file edits, git operations, running tests, project scaffolding. Full filesystem
+      and shell access.
 
-  architect:
-    description: >
-      High-level software architecture decisions, system design, technology
-      selection, code review, and planning.
+      '
     backend: claude-code
     model: glm-5.1
     timeout: 600
-    system_prompt: >
-      You are a software architect. Focus on system design, trade-offs,
-      and long-term maintainability. Don't write code unless asked —
-      instead describe approaches, compare options, and recommend directions.
+    system_prompt: 'You are a senior software engineer. Write clean, well-tested code.
+      Prefer simple solutions over clever ones. Always explain your changes briefly
+      before making them.
+
+      '
     fallbacks:
-      - backend: ollama
-        model: qwen3.5:9b-64K
-        timeout: 120
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
+  architect:
+    description: 'High-level software architecture decisions, system design, technology
+      selection, code review, and planning.
+
+      '
+    backend: claude-code
+    model: glm-5.1
+    timeout: 600
+    system_prompt: 'You are a software architect. Focus on system design, trade-offs,
+      and long-term maintainability. Don''t write code unless asked — instead describe
+      approaches, compare options, and recommend directions.
+
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120

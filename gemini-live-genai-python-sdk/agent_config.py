@@ -237,6 +237,36 @@ def reload_agents() -> list[str]:
     return names
 
 
+# --- Gemini Session Config ---
+
+def get_gemini_session() -> dict:
+    """Return the gemini_session config (model, voice, system_prompt)."""
+    data = _load_full()
+    session = data.get("gemini_session", {})
+    return {
+        "model": session.get("model", "gemini-3.1-flash-live-preview"),
+        "voice": session.get("voice", "Puck"),
+        "system_prompt": session.get("system_prompt", "").strip(),
+    }
+
+
+def update_gemini_session(updates: dict) -> dict:
+    """Update gemini_session fields. Only system_prompt is writable for now.
+    Returns the updated config."""
+    data = _load_full()
+    if "gemini_session" not in data:
+        data["gemini_session"] = {}
+
+    session = data["gemini_session"]
+
+    if "system_prompt" in updates:
+        session["system_prompt"] = updates["system_prompt"].strip()
+
+    _save_full(data)
+    logger.info("Updated gemini_session config")
+    return get_gemini_session()
+
+
 def _build_agent_config(data: dict) -> dict:
     """Build the YAML-compatible agent config dict from form data."""
     config = {}

@@ -31,9 +31,64 @@ logging.getLogger("gemini_live").setLevel(logging.INFO)
 logging.getLogger("tools").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Configuration — supports multiple API keys for fallback
+# Set GEMINI_API_KEY_2 (or GEMINI_API_KEYS=key1,key2) in .env
+_raw_keys = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(",") if k.strip()]
+if not _raw_keys:
+    _single = os.getenv("GEMINI_API_KEY", "")
+    if _single:
+        _raw_keys = [_single]
+_extra = os.getenv("GEMINI_API_KEY_2", "")
+if _extra and _extra not in _raw_keys:
+    _raw_keys.append(_extra)
+if not _raw_keys:
+    raise RuntimeError("No Gemini API key found. Set GEMINI_API_KEY or GEMINI_API_KEYS in .env")
+GEMINI_API_KEYS = _raw_keys
+logger.info(f"Loaded {len(GEMINI_API_KEYS)} Gemini API key(s)")
 MODEL = os.getenv("MODEL", "gemini-3.1-flash-live-preview")
+
+# --- Session usage tracker ---
+# Accumulates token counts per WebSocket session, resets on new connection.
+_session_usage = {
+    "turns": 0,
+    "prompt_tokens": 0,
+    "response_tokens": 0,
+    "total_tokens": 0,
+    "cached_tokens": 0,
+    "thoughts_tokens": 0,
+    "model": MODEL,
+}
+# Pricing per million tokens (Gemini 3.1 Flash Live preview rates)
+_INPUT_PRICE_PER_M = 0.30   # $/M input tokens
+_OUTPUT_PRICE_PER_M = 2.50  # $/M output tokens
+
+
+def _reset_session_usage():
+    global _session_usage
+    _session_usage = {
+        "turns": 0,
+        "prompt_tokens": 0,
+        "response_tokens": 0,
+        "total_tokens": 0,
+        "cached_tokens": 0,
+        "thoughts_tokens": 0,
+        "model": MODEL,
+    }
+
+
+def _accumulate_usage(usage_data: dict):
+    """Called from WS handler with the latest usage snapshot from Gemini."""
+    global _session_usage
+    # Don't increment turns here — usage events fire per-chunk, not per-turn.
+    # Turns are tracked client-side via turn_complete events.
+    # Gemini Live usage_metadata is cumulative per-session,
+    # so we take the latest value (not add to running total).
+    _session_usage["prompt_tokens"] = usage_data.get("prompt_token_count", _session_usage["prompt_tokens"])
+    _session_usage["response_tokens"] = usage_data.get("response_token_count", _session_usage["response_tokens"])
+    _session_usage["total_tokens"] = usage_data.get("total_token_count", _session_usage["total_tokens"])
+    _session_usage["cached_tokens"] = usage_data.get("cached_content_token_count", _session_usage["cached_tokens"])
+    _session_usage["thoughts_tokens"] = usage_data.get("thoughts_token_count", _session_usage["thoughts_tokens"])
+
 
 # Initialize FastAPI
 app = FastAPI()
@@ -117,12 +172,54 @@ async def delete_agent(name: str):
     return {"message": message}
 
 
+@app.get("/api/usage")
+async def get_usage():
+    """Return accumulated token usage and estimated cost for this session."""
+    prompt = _session_usage["prompt_tokens"]
+    response = _session_usage["response_tokens"]
+    # Subtract cached tokens from prompt to avoid double-counting
+    billable_input = max(0, prompt - _session_usage["cached_tokens"])
+    est_cost = (billable_input * _INPUT_PRICE_PER_M + response * _OUTPUT_PRICE_PER_M) / 1_000_000
+    return {
+        **_session_usage,
+        "billable_input_tokens": billable_input,
+        "estimated_cost_usd": round(est_cost, 4),
+        "input_price_per_m": _INPUT_PRICE_PER_M,
+        "output_price_per_m": _OUTPUT_PRICE_PER_M,
+    }
+
+
+@app.post("/api/usage/reset")
+async def reset_usage():
+    """Reset the session usage counters."""
+    _reset_session_usage()
+    return {"message": "Usage counters reset"}
+
+
+@app.get("/api/gemini-config")
+async def get_gemini_config():
+    """Return the Gemini Live session config (model, voice, system_prompt)."""
+    return agent_config.get_gemini_session()
+
+
+@app.put("/api/gemini-config")
+async def update_gemini_config(data: dict):
+    """Update the Gemini Live session system prompt.
+    Changes take effect on the next WebSocket connection."""
+    from fastapi.responses import JSONResponse
+    if "system_prompt" not in data:
+        return JSONResponse({"error": "system_prompt is required"}, status_code=400)
+    updated = agent_config.update_gemini_session(data)
+    return updated
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for Gemini Live."""
     await websocket.accept()
 
     logger.info("WebSocket connection accepted")
+    _reset_session_usage()
 
     audio_input_queue = asyncio.Queue()
     video_input_queue = asyncio.Queue()
@@ -134,14 +231,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def audio_interrupt_callback():
         pass
-
-    gemini_client = GeminiLive(
-        api_key=GEMINI_API_KEY,
-        model=MODEL,
-        input_sample_rate=16000,
-        tools=TOOL_DECLARATIONS,
-        tool_mapping=TOOL_MAPPING,
-    )
 
     async def receive_from_client():
         try:
@@ -174,16 +263,44 @@ async def websocket_endpoint(websocket: WebSocket):
     set_notification_channel(asyncio.get_running_loop(), notification_queue)
 
     async def run_session():
-        async for event in gemini_client.start_session(
-            audio_input_queue=audio_input_queue,
-            video_input_queue=video_input_queue,
-            text_input_queue=text_input_queue,
-            audio_output_callback=audio_output_callback,
-            audio_interrupt_callback=audio_interrupt_callback,
-            notification_queue=notification_queue,
-        ):
-            if event:
-                await websocket.send_json(event)
+        """Try connecting with each API key in order, fallback on failure."""
+        last_error = None
+        for attempt, api_key in enumerate(GEMINI_API_KEYS):
+            key_label = f"key {attempt+1}/{len(GEMINI_API_KEYS)}"
+            try:
+                client = GeminiLive(
+                    api_key=api_key,
+                    model=MODEL,
+                    input_sample_rate=16000,
+                    tools=TOOL_DECLARATIONS,
+                    tool_mapping=TOOL_MAPPING,
+                )
+                logger.info(f"Connecting with {key_label}...")
+                async for event in client.start_session(
+                    audio_input_queue=audio_input_queue,
+                    video_input_queue=video_input_queue,
+                    text_input_queue=text_input_queue,
+                    audio_output_callback=audio_output_callback,
+                    audio_interrupt_callback=audio_interrupt_callback,
+                    notification_queue=notification_queue,
+                ):
+                    if event:
+                        # Accumulate usage stats before forwarding to client
+                        if event.get("type") == "usage":
+                            _accumulate_usage(event["usage"])
+                        await websocket.send_json(event)
+                return  # session ended normally
+            except Exception as e:
+                last_error = e
+                logger.warning(f"{key_label} failed: {type(e).__name__}: {e}")
+                if attempt < len(GEMINI_API_KEYS) - 1:
+                    logger.info(f"Falling back to next key...")
+                    await websocket.send_json({
+                        "type": "gemini",
+                        "text": f"[API key {attempt+1} failed, switching to fallback key...]"
+                    })
+                else:
+                    raise
 
     try:
         await run_session()
