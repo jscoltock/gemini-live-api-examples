@@ -57,14 +57,15 @@ class TaskManager:
         """Set the notification callback. Called from any thread when a task finishes."""
         self._notify = callback
 
-    def start(self, agent: str, run_list: list[tuple[str, int]],
+    def start(self, agent: str, run_list: list[tuple[str, int, str]],
               context: dict | None = None) -> Task:
         """
         Start a background task with fallback support.
 
-        run_list is an ordered list of (command, timeout) pairs.
+        run_list is an ordered list of (command, timeout, label) tuples.
+        label describes the config (e.g. "ollama/qwen3.5:9b-64K").
         Each is tried in sequence until one succeeds (exit code 0 + non-empty output).
-        If all fail, the task is marked failed with the last error.
+        If all fail, the task is marked failed with all errors.
         """
         task_id = uuid.uuid4().hex[:8]
         task = Task(
@@ -89,14 +90,12 @@ class TaskManager:
         logger.info(f"Started task {task_id}: agent={agent} attempts={len(run_list)}")
         return task
 
-    def _run_task_with_fallbacks(self, task: Task, run_list: list[tuple[str, int]]):
-        """Try each (command, timeout) in order until one succeeds."""
-        last_output = ""
-        last_status = "failed"
+    def _run_task_with_fallbacks(self, task: Task, run_list: list[tuple[str, int, str]]):
+        """Try each (command, timeout, label) in order until one succeeds."""
+        failures = []  # list of (label, error)
 
-        for i, (command, timeout) in enumerate(run_list):
+        for i, (command, timeout, label) in enumerate(run_list):
             is_primary = (i == 0)
-            attempt_label = "primary" if is_primary else f"fallback {i}"
 
             with self._lock:
                 # Don't try more if cancelled
@@ -104,7 +103,7 @@ class TaskManager:
                     return
                 task.command = command
 
-            logger.info(f"Task {task.id} attempt {attempt_label}: {command[:100]}")
+            logger.info(f"Task {task.id} [{label}] attempt {'primary' if is_primary else f'fallback {i}'}: {command[:100]}")
 
             success, output = self._run_single(command, timeout)
 
@@ -114,25 +113,24 @@ class TaskManager:
                         return
                     task.output = output
                     task.status = "completed"
-                    if not is_primary:
-                        task.output = f"(succeeded on {attempt_label})\n{output}"
-                logger.info(f"Task {task.id} completed on {attempt_label}: {output[:200]}")
+                    if failures:
+                        failed_summary = ", ".join(f"{lbl} ({err[:50]})" for lbl, err in failures)
+                        task.output = f"(succeeded on {label} after: {failed_summary})\n{output}"
+                logger.info(f"Task {task.id} completed on {label}: {output[:200]}")
                 self._send_notification(task)
                 return
 
-            # Failed — log and try next
-            logger.warning(
-                f"Task {task.id} {attempt_label} failed: {output[:200]}"
-            )
-            last_output = output
-            last_status = "failed"
+            # Failed — record and try next
+            logger.warning(f"Task {task.id} [{label}] failed: {output[:200]}")
+            failures.append((label, output))
 
         # All attempts exhausted
         with self._lock:
             if task.status != "running":
                 return
-            task.output = f"All {len(run_list)} attempt(s) failed.\n\nLast error:\n{last_output}"
-            task.status = last_status
+            failure_details = "\n".join(f"  [{lbl}] {err[:200]}" for lbl, err in failures)
+            task.output = f"All {len(run_list)} attempt(s) failed:\n{failure_details}"
+            task.status = "failed"
 
         logger.error(f"Task {task.id} all {len(run_list)} attempts failed")
         self._send_notification(task)

@@ -150,13 +150,14 @@ def ask_agent(agent: str, prompt: str) -> str:
     if not attempts:
         return f"Agent '{agent}' has no available configs (check env vars)."
 
-    # Build the ordered list of (command, timeout) pairs
+    # Build the ordered list of (command, timeout, label) tuples
     run_list = []
     for cfg in attempts:
         try:
             cmd = _build_command(cfg, system_prompt, prompt)
             timeout = cfg.get("timeout", 120)
-            run_list.append((cmd, timeout))
+            label = f"{cfg.get('backend', '?')}/{cfg.get('model', '?')}"
+            run_list.append((cmd, timeout, label))
         except Exception as e:
             logger.warning(f"Skipping config for agent '{agent}': {e}")
 
