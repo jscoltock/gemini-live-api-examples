@@ -6,6 +6,7 @@ const appSection = document.getElementById("app-section");
 const sessionEndSection = document.getElementById("session-end-section");
 const restartBtn = document.getElementById("restartBtn");
 const micBtn = document.getElementById("micBtn");
+const voiceBtn = document.getElementById("voiceBtn");
 const cameraBtn = document.getElementById("cameraBtn");
 const screenBtn = document.getElementById("screenBtn");
 const disconnectBtn = document.getElementById("disconnectBtn");
@@ -18,6 +19,7 @@ const chatLog = document.getElementById("chat-log");
 
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
+let voiceEnabled = false;
 
 const mediaHandler = new MediaHandler();
 const geminiClient = new GeminiClient({
@@ -43,7 +45,9 @@ const geminiClient = new GeminiClient({
         console.error("Parse error:", e);
       }
     } else {
-      mediaHandler.playAudio(event.data);
+      if (voiceEnabled) {
+        mediaHandler.playAudio(event.data);
+      }
     }
   },
   onClose: (e) => {
@@ -134,6 +138,12 @@ micBtn.onclick = async () => {
   }
 };
 
+voiceBtn.onclick = () => {
+  voiceEnabled = !voiceEnabled;
+  voiceBtn.textContent = voiceEnabled ? "Stop Voice" : "Start Voice";
+  voiceBtn.classList.toggle("active", voiceEnabled);
+};
+
 cameraBtn.onclick = async () => {
   if (cameraBtn.textContent === "Stop Camera") {
     mediaHandler.stopVideo(videoPreview);
@@ -222,6 +232,9 @@ function resetUI() {
   videoPlaceholder.classList.remove("hidden");
 
   micBtn.textContent = "Start Mic";
+  voiceBtn.textContent = "Start Voice";
+  voiceBtn.classList.remove("active");
+  voiceEnabled = false;
   cameraBtn.textContent = "Start Camera";
   screenBtn.textContent = "Share Screen";
   chatLog.innerHTML = "";
