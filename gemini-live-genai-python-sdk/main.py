@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
 from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel, task_manager, AGENTS
+import agent_config
 
 # Load environment variables
 load_dotenv()
@@ -63,16 +64,57 @@ async def get_tasks():
 @app.get("/api/agents")
 async def get_agents():
     """Return agent configs (name, backend, model, timeout) for the UI."""
-    result = []
-    for name, config in AGENTS.items():
-        result.append({
-            "name": name,
-            "backend": config.get("backend", ""),
-            "model": config.get("model", ""),
-            "timeout": config.get("timeout", 120),
-            "description": config.get("description", "").strip().replace("\n", " "),
-        })
-    return result
+    return agent_config.list_agents()
+
+
+@app.post("/api/agents/reload")
+async def reload_agents():
+    """Hot-reload agents from agents.yaml without server restart."""
+    names = agent_config.reload_agents()
+    return {"agents": names, "count": len(names)}
+
+
+@app.get("/api/agents/{name}")
+async def get_agent(name: str):
+    """Return a single agent's full config."""
+    agent = agent_config.get_agent(name)
+    if not agent:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": f"Agent '{name}' not found"}, status_code=404)
+    return agent
+
+
+@app.post("/api/agents")
+async def create_agent(data: dict):
+    """Create a new agent."""
+    from fastapi.responses import JSONResponse
+    agent, errors = agent_config.create_agent(data)
+    if errors:
+        return JSONResponse({"errors": errors}, status_code=400)
+    agent_config.reload_agents()
+    return agent
+
+
+@app.put("/api/agents/{name}")
+async def update_agent(name: str, data: dict):
+    """Update an existing agent."""
+    from fastapi.responses import JSONResponse
+    agent, errors = agent_config.update_agent(name, data)
+    if errors:
+        return JSONResponse({"errors": errors}, status_code=400)
+    agent_config.reload_agents()
+    return agent
+
+
+@app.delete("/api/agents/{name}")
+async def delete_agent(name: str):
+    """Delete an agent."""
+    from fastapi.responses import JSONResponse
+    success, message = agent_config.delete_agent(name)
+    if not success:
+        return JSONResponse({"error": message}, status_code=404)
+    agent_config.reload_agents()
+    return {"message": message}
 
 
 @app.websocket("/ws")
