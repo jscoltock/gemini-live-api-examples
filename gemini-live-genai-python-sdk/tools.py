@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import threading
@@ -19,6 +20,37 @@ logger = logging.getLogger(__name__)
 AGENTS_CONFIG_PATH = Path(__file__).parent / "agents.yaml"
 
 
+def _resolve_env(value):
+    """Resolve ${VAR} references in a string (or dict values). Returns None if var is missing."""
+    if isinstance(value, str):
+        missing = []
+        def _sub(m):
+            var = m.group(1)
+            val = os.environ.get(var)
+            if val is None:
+                missing.append(var)
+            return val or m.group(0)
+
+        resolved = re.sub(r'\$\{(\w+)\}', _sub, value)
+        if missing:
+            return None  # signal: this config is unavailable
+        return resolved
+
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(v, str):
+                r = _resolve_env(v)
+                if r is None:
+                    return None  # whole config unavailable if any var missing
+                out[k] = r
+            else:
+                out[k] = v
+        return out
+
+    return value
+
+
 def _load_agents() -> dict:
     """Load agent definitions from agents.yaml."""
     with open(AGENTS_CONFIG_PATH) as f:
@@ -28,11 +60,35 @@ def _load_agents() -> dict:
 AGENTS = _load_agents()
 
 
-def _build_command(config: dict, prompt: str) -> str:
+def _get_attempts(agent_config: dict) -> list[dict]:
+    """
+    Build the ordered list of configs to try: primary first, then fallbacks.
+    Each config is a fully self-contained dict with backend, model, timeout, etc.
+    system_prompt is NOT included — it lives at agent level only.
+    Configs with missing env vars are skipped.
+    """
+    attempts = []
+
+    # Primary config (everything except system_prompt and fallbacks)
+    primary = {k: v for k, v in agent_config.items()
+               if k not in ("system_prompt", "fallbacks", "description")}
+    primary = _resolve_env(primary)
+    if primary is not None:
+        attempts.append(primary)
+
+    # Fallbacks
+    for fb in agent_config.get("fallbacks", []):
+        resolved = _resolve_env(dict(fb))
+        if resolved is not None:
+            attempts.append(resolved)
+
+    return attempts
+
+
+def _build_command(config: dict, system_prompt: str, prompt: str) -> str:
     """Build the shell command for an agent based on its backend type."""
     backend = config["backend"].lower()
     model = config.get("model", "")
-    system_prompt = config.get("system_prompt", "").strip()
 
     # Combine system prompt + user prompt
     if system_prompt:
@@ -44,7 +100,7 @@ def _build_command(config: dict, prompt: str) -> str:
     escaped_prompt = shlex.quote(full_prompt)
 
     if backend == "ollama":
-        # Use Ollama HTTP API directly (like scripts/ask_ollama did)
+        # Use Ollama HTTP API directly
         payload = json.dumps({"model": model, "prompt": full_prompt, "stream": False})
         return (
             f"curl -s http://localhost:11434/api/generate "
@@ -55,8 +111,21 @@ def _build_command(config: dict, prompt: str) -> str:
     elif backend == "claude-code":
         cmd = f"claude --model {shlex.quote(model)}"
         cmd += " --dangerously-skip-permissions"
+
+        # Pass API key and base_url via env vars if provided
+        env_prefix = ""
+        api_key = config.get("api_key")
+        base_url = config.get("base_url")
+        env_vars = []
+        if api_key:
+            env_vars.append(f"ANTHROPIC_API_KEY={shlex.quote(api_key)}")
+        if base_url:
+            env_vars.append(f"ANTHROPIC_BASE_URL={shlex.quote(base_url)}")
+        if env_vars:
+            env_prefix = " ".join(env_vars) + " "
+
         cmd += f" -p {escaped_prompt}"
-        return cmd
+        return env_prefix + cmd
 
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -114,7 +183,8 @@ def ask_agent(agent: str, prompt: str) -> str:
     """Route a prompt to a named agent. All agents run async in the background.
 
     Returns immediately with a task ID. When the agent finishes, a notification
-    is sent with the result.
+    is sent with the result. If the primary config fails, fallbacks are tried
+    in order until one succeeds or all are exhausted.
 
     Args:
         agent: The agent name to use (must match a key in agents.yaml).
@@ -124,14 +194,34 @@ def ask_agent(agent: str, prompt: str) -> str:
         available = ", ".join(AGENTS.keys())
         return f"Unknown agent '{agent}'. Available: {available}"
 
-    config = AGENTS[agent]
-    command = _build_command(config, prompt)
-    timeout = config.get("timeout", 120)
+    agent_config = AGENTS[agent]
+    system_prompt = agent_config.get("system_prompt", "").strip()
+    attempts = _get_attempts(agent_config)
 
-    logger.info(f"ask_agent: agent={agent} backend={config['backend']} model={config.get('model','')} prompt={prompt[:80]}")
+    if not attempts:
+        return f"Agent '{agent}' has no available configs (check env vars)."
 
-    task = task_manager.start(agent, command, timeout=timeout)
-    return f"Task {task.id} started. Agent: {agent}. You'll be notified when it completes."
+    # Build the ordered list of (command, timeout) pairs
+    run_list = []
+    for cfg in attempts:
+        try:
+            cmd = _build_command(cfg, system_prompt, prompt)
+            timeout = cfg.get("timeout", 120)
+            run_list.append((cmd, timeout))
+        except Exception as e:
+            logger.warning(f"Skipping config for agent '{agent}': {e}")
+
+    if not run_list:
+        return f"Agent '{agent}' — all configs failed to build commands."
+
+    logger.info(
+        f"ask_agent: agent={agent} attempts={len(run_list)} "
+        f"primary={attempts[0].get('backend','?')}/{attempts[0].get('model','?')} "
+        f"prompt={prompt[:80]}"
+    )
+
+    task = task_manager.start(agent, run_list)
+    return f"Task {task.id} started. Agent: {agent} ({len(run_list)} config(s) queued). You'll be notified when it completes."
 
 
 def list_tasks(status_filter: str = "") -> str:
@@ -168,7 +258,9 @@ def _build_agent_descriptions() -> str:
     parts = []
     for name, config in AGENTS.items():
         desc = config.get("description", "").strip().replace("\n", " ")
-        parts.append(f"- {name}: {desc}")
+        fb_count = len(config.get("fallbacks", []))
+        fb_note = f" ({fb_count} fallback{'s' if fb_count != 1 else ''})" if fb_count else ""
+        parts.append(f"- {name}: {desc}{fb_note}")
     return "\n".join(parts)
 
 
@@ -194,6 +286,7 @@ ask_agent_declaration = types.FunctionDeclaration(
     description=(
         "Send a task to a specialist agent. Runs in the background, returns a task ID immediately. "
         "You will receive a notification when the agent finishes.\n\n"
+        "If the primary config fails, fallbacks are tried automatically.\n\n"
         "Available agents:\n" + _agent_descriptions
     ),
     parameters_json_schema={

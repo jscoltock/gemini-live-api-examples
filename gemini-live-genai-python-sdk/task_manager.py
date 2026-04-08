@@ -6,13 +6,12 @@ Standalone module with no Gemini dependencies. Designed so agent context
 `context` field on each task dict.
 """
 
-import asyncio
 import logging
 import subprocess
 import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +21,13 @@ class Task:
     """A tracked background task."""
     id: str
     agent: str  # agent name from agents.yaml
-    command: str
+    command: str  # the command that ultimately ran (last attempt)
     status: str  # "running", "completed", "failed", "timed_out", "cancelled"
     output: str = ""
     thread: Optional[threading.Thread] = None
     process: Optional[subprocess.Popen] = None
     context: dict = field(default_factory=dict)  # reserved for future use
+    attempts: int = 0  # how many configs were tried
 
     def summary(self) -> str:
         short = self.command[:80]
@@ -43,7 +43,7 @@ class TaskManager:
     Usage:
         tm = TaskManager()
         tm.set_notify(callback)  # callback(str) called when task finishes
-        task = tm.start("ollama", "scripts/ask_ollama 'hello'")
+        task = tm.start("ollama", [("cmd1", 120), ("fallback_cmd", 60)])
         print(tm.list_tasks())
         tm.cancel(task.id)
     """
@@ -57,84 +57,120 @@ class TaskManager:
         """Set the notification callback. Called from any thread when a task finishes."""
         self._notify = callback
 
-    def start(self, agent: str, command: str, timeout: int = 120,
+    def start(self, agent: str, run_list: list[tuple[str, int]],
               context: dict | None = None) -> Task:
         """
-        Start a background task. Returns immediately with a Task object.
+        Start a background task with fallback support.
+
+        run_list is an ordered list of (command, timeout) pairs.
+        Each is tried in sequence until one succeeds (exit code 0 + non-empty output).
+        If all fail, the task is marked failed with the last error.
         """
         task_id = uuid.uuid4().hex[:8]
         task = Task(
             id=task_id,
             agent=agent,
-            command=command,
+            command=run_list[0][0] if run_list else "",
             status="running",
             context=context or {},
+            attempts=len(run_list),
         )
 
         with self._lock:
             self._tasks[task_id] = task
 
         thread = threading.Thread(
-            target=self._run_task,
-            args=(task, command, timeout),
+            target=self._run_task_with_fallbacks,
+            args=(task, run_list),
             daemon=True,
         )
         task.thread = thread
         thread.start()
-        logger.info(f"Started task {task_id}: agent={agent} cmd={command[:80]}")
+        logger.info(f"Started task {task_id}: agent={agent} attempts={len(run_list)}")
         return task
 
-    def _run_task(self, task: Task, command: str, timeout: int):
-        """Internal: run a command in a background thread."""
+    def _run_task_with_fallbacks(self, task: Task, run_list: list[tuple[str, int]]):
+        """Try each (command, timeout) in order until one succeeds."""
+        last_output = ""
+        last_status = "failed"
+
+        for i, (command, timeout) in enumerate(run_list):
+            is_primary = (i == 0)
+            attempt_label = "primary" if is_primary else f"fallback {i}"
+
+            with self._lock:
+                # Don't try more if cancelled
+                if task.status != "running":
+                    return
+                task.command = command
+
+            logger.info(f"Task {task.id} attempt {attempt_label}: {command[:100]}")
+
+            success, output = self._run_single(command, timeout)
+
+            if success:
+                with self._lock:
+                    if task.status != "running":
+                        return
+                    task.output = output
+                    task.status = "completed"
+                    if not is_primary:
+                        task.output = f"(succeeded on {attempt_label})\n{output}"
+                logger.info(f"Task {task.id} completed on {attempt_label}: {output[:200]}")
+                self._send_notification(task)
+                return
+
+            # Failed — log and try next
+            logger.warning(
+                f"Task {task.id} {attempt_label} failed: {output[:200]}"
+            )
+            last_output = output
+            last_status = "failed"
+
+        # All attempts exhausted
+        with self._lock:
+            if task.status != "running":
+                return
+            task.output = f"All {len(run_list)} attempt(s) failed.\n\nLast error:\n{last_output}"
+            task.status = last_status
+
+        logger.error(f"Task {task.id} all {len(run_list)} attempts failed")
+        self._send_notification(task)
+
+    def _run_single(self, command: str, timeout: int) -> tuple[bool, str]:
+        """
+        Run a single command. Returns (success, output).
+        success = True if exit code 0 and non-empty stdout.
+        """
         try:
             proc = subprocess.Popen(
                 command, shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            with self._lock:
-                task.process = proc
-
             stdout, stderr = proc.communicate(timeout=timeout)
 
-            with self._lock:
-                # Don't overwrite if already cancelled
-                if task.status != "running":
-                    return
+            output = stdout or ""
+            if stderr:
+                output += "\nSTDERR: " + stderr
+            if proc.returncode != 0:
+                output += f"\nExit code: {proc.returncode}"
 
-                output = stdout or ""
-                if stderr:
-                    output += "\nSTDERR: " + stderr
-                if proc.returncode != 0:
-                    output += f"\nExit code: {proc.returncode}"
-                task.output = output.strip() or "(no output)"
-                task.status = "failed" if proc.returncode != 0 else "completed"
-
-            logger.info(f"Task {task.id} {task.status}: {output[:200]}")
-            self._send_notification(task)
+            output = output.strip() or "(no output)"
+            success = proc.returncode == 0 and bool(stdout and stdout.strip())
+            return success, output
 
         except subprocess.TimeoutExpired:
-            with self._lock:
-                if task.status == "running":
-                    proc.kill()
-                    task.output = f"Timed out after {timeout}s"
-                    task.status = "timed_out"
-            logger.warning(f"Task {task.id} timed out after {timeout}s")
-            self._send_notification(task)
-
+            proc.kill()
+            return False, f"Timed out after {timeout}s"
         except Exception as e:
-            with self._lock:
-                if task.status == "running":
-                    task.output = str(e)
-                    task.status = "failed"
-            logger.error(f"Task {task.id} error: {e}")
-            self._send_notification(task)
+            return False, str(e)
 
     def _send_notification(self, task: Task):
         """Fire the notification callback if set."""
         if self._notify:
             msg = (
                 f"[Task {task.id} {task.status}] "
-                f"Agent: {task.agent} | Command: {task.command[:100]}\n"
+                f"Agent: {task.agent} | Attempts: {task.attempts}\n"
                 f"Output:\n{task.output[:1000]}"
             )
             try:
@@ -180,14 +216,13 @@ class TaskManager:
         return {
             "id": task.id, "agent": task.agent, "status": task.status,
             "command": task.command, "output": task.output,
-            "context": task.context,
+            "context": task.context, "attempts": task.attempts,
         }
 
     def cleanup(self, max_age: int = 100):
         """Remove old completed/failed/cancelled tasks to prevent unbounded growth."""
         with self._lock:
             done = [t for t in self._tasks.values() if t.status != "running"]
-            # Keep the most recent max_age finished tasks
             if len(done) > max_age:
                 keep_ids = {t.id for t in done[-max_age:]}
                 running_ids = {t.id for t in self._tasks.values() if t.status == "running"}
