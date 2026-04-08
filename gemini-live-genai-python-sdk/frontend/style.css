@@ -32,7 +32,7 @@ body {
   max-width: 1600px;
   margin: 0 auto;
   background-color: var(--surface-color);
-  padding: 48px;
+  padding: 12px 24px;
   border-radius: var(--radius-lg);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05);
   display: flex;
@@ -103,9 +103,9 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
+  margin-bottom: 0.5rem;
   border-bottom: 1px solid #eee;
-  padding-bottom: 1rem;
+  padding-bottom: 0.4rem;
 }
 
 .status {
@@ -181,9 +181,16 @@ video {
 
 .controls {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.controls .btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .btn {
@@ -234,6 +241,8 @@ video {
   border-radius: 1rem;
   max-width: 80%;
   word-wrap: break-word;
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .message.user {

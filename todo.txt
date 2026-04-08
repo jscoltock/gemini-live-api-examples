@@ -1,24 +1,27 @@
-add fallback configurations (all parms -api key model)
-add gemini api key fallback
-improve UI to show more info (smaller buttons to fit on one line, 
-                              Smaller "gemini live api demo" 
-                              change name too, 
-                              no space between header and rest of stufff,
+make all prompts optimized to use less token by being more concise
+improve UI to show more info (no space between header and rest of stufff,
                               smaller font in chat (same as right pane,
                               make type a message box same width as chat pane,
                               move panes around))
-add util to edit agents instead of manually editing yaml file
 
 Don't call gemini at all if not needed (no voice, VAD, images etc)
-
 change the system. prompt so gemini is the Chief of Staff and can do things related to vision and sound
 improve system prompt for agents
 add upload images and or files
 deal with concurrency limits on z.ai models
 add home automation assistant
-make sure right pane shows correct model and harness (in case fallback is being used)
 add agent that is second brain - infinite memory karpathy or obsidian?
+use caveman?
+test changing prompts
 
 X use smaller gemini live model (dont bother - older models cost the same amount)
 X add model and timeout to right pane 
 X add backend harness to right pane
+X add fallback configurations (all parms -api key model)
+X add gemini api key fallback
+X add util to edit agents instead of manually editing yaml file
+x show google-live api costs
+X allow editing system prompt for gemini
+X make sure right pane shows correct model and harness (in case fallback is being used)
+
+

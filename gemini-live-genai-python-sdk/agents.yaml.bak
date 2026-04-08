@@ -1,0 +1,72 @@
+gemini_session:
+  model: gemini-3.1-flash-live-preview
+  voice: Puck
+  system_prompt: test prompt
+agents:
+  info:
+    description: 'General knowledge Q&A. Use as the default for any question or non-technical
+      request that can be answered without a search.
+
+      '
+    backend: ollama
+    model: qwen3.5:9b-64K
+    timeout: 120
+    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
+      If you don''t know something, say so. Prefer short answers over long ones.
+
+      '
+    fallbacks:
+    - backend: claude-code
+      model: glm-5.1
+      timeout: 60
+  personal-assistant:
+    description: 'Do the stuff a personal assistant would do. Help with all the google
+      workspace tools - mail, calendar, contacts, etc.
+
+      '
+    backend: claude-code
+    model: glm-5.1
+    timeout: 120
+    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
+      If you don''t know something, say so. Prefer short answers over long ones.
+
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
+  coder:
+    description: 'Software engineering: writing features, debugging, refactoring,
+      multi-file edits, git operations, running tests, project scaffolding. Full filesystem
+      and shell access.
+
+      '
+    backend: claude-code
+    model: glm-5.1
+    timeout: 600
+    system_prompt: 'You are a senior software engineer. Write clean, well-tested code.
+      Prefer simple solutions over clever ones. Always explain your changes briefly
+      before making them.
+
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
+  architect:
+    description: 'High-level software architecture decisions, system design, technology
+      selection, code review, and planning.
+
+      '
+    backend: claude-code
+    model: glm-5.1
+    timeout: 600
+    system_prompt: 'You are a software architect. Focus on system design, trade-offs,
+      and long-term maintainability. Don''t write code unless asked — instead describe
+      approaches, compare options, and recommend directions.
+
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
