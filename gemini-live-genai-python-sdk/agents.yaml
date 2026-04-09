@@ -15,6 +15,9 @@ gemini_session:
 
     - architect: System design, code review, architecture decisions, planning.
 
+    - local: Local Ollama agent with file and shell tools. Good for quick file operations,
+    running scripts, and light coding tasks.
+
     Available tools:
 
     - ask_agent: Send a task to one of the agents above.
@@ -38,17 +41,18 @@ gemini_session:
     in the prompt parameter. The agent has no memory of previous turns.'
 agents:
   info:
-    description: 'General knowledge Q&A. Use as the default for any question or non-technical
+    description: General knowledge Q&A. Use as the default for any question or non-technical
       request that can be answered without a search.
-
-      '
     backend: ollama
     model: qwen3.5:9b-64K
     timeout: 120
-    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
-      If you don''t know something, say so. Prefer short answers over long ones.
-
-      '
+    system_prompt: You are a helpful personal assistant. Be concise and practical.
+      If you don't know something, say so. Prefer short answers over long ones.
+    tools:
+    - read_file
+    - write_file
+    - edit_file
+    - bash
     fallbacks:
     - backend: claude-code
       model: glm-5.1
@@ -97,6 +101,32 @@ agents:
     system_prompt: 'You are a software architect. Focus on system design, trade-offs,
       and long-term maintainability. Don''t write code unless asked — instead describe
       approaches, compare options, and recommend directions.
+
+      '
+    fallbacks:
+    - backend: ollama
+      model: qwen3.5:9b-64K
+      timeout: 120
+  local:
+    description: 'Local Ollama agent with file and shell tool access. Good for quick
+      file operations, running scripts, and light coding tasks that don''t need a
+      full cloud agent.
+
+      '
+    backend: ollama
+    model: gemma4:e4b
+    tools:
+    - read_file
+    - write_file
+    - edit_file
+    - bash
+    options:
+      temperature: 0
+      top_p: 0.85
+      repeat_penalty: 1.15
+    timeout: 300
+    system_prompt: 'You are a helpful coding assistant with access to filesystem and
+      shell tools. Use them to complete tasks efficiently. Be concise in your responses.
 
       '
     fallbacks:

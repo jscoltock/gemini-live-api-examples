@@ -101,9 +101,10 @@ class TaskManager:
                 # Don't try more if cancelled
                 if task.status != "running":
                     return
-                task.command = command
+                task.command = command if isinstance(command, str) else f"<callable:{label}>"
 
-            logger.info(f"Task {task.id} [{label}] attempt {'primary' if is_primary else f'fallback {i}'}: {command[:100]}")
+            cmd_preview = command[:100] if isinstance(command, str) else f"<callable:{label}>"
+            logger.info(f"Task {task.id} [{label}] attempt {'primary' if is_primary else f'fallback {i}'}: {cmd_preview}")
 
             success, output = self._run_single(command, timeout)
 
@@ -135,11 +136,15 @@ class TaskManager:
         logger.error(f"Task {task.id} all {len(run_list)} attempts failed")
         self._send_notification(task)
 
-    def _run_single(self, command: str, timeout: int) -> tuple[bool, str]:
+    def _run_single(self, command, timeout):
         """
-        Run a single command. Returns (success, output).
-        success = True if exit code 0 and non-empty stdout.
+        Run a command or callable. Returns (success, output).
+        success = True if exit code 0 and non-empty stdout (for shell)
+                  or non-empty result (for callable).
         """
+        if callable(command):
+            return self._run_callable(command)
+
         try:
             proc = subprocess.Popen(
                 command, shell=True,
@@ -171,6 +176,16 @@ class TaskManager:
         except subprocess.TimeoutExpired:
             proc.kill()
             return False, f"Timed out after {timeout}s"
+        except Exception as e:
+            return False, str(e)
+
+    def _run_callable(self, func):
+        """Run a Python callable (e.g. Ollama tool loop) and return (success, output)."""
+        try:
+            output = func()
+            output = str(output or "").strip()
+            success = bool(output) and not output.startswith("Error:")
+            return success, output or "(no output)"
         except Exception as e:
             return False, str(e)
 

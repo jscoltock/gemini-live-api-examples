@@ -4,6 +4,9 @@ import logging
 import os
 import shlex
 import subprocess
+import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -155,16 +158,36 @@ def ask_agent(agent: str, prompt: str) -> str:
 
     agent_config = AGENTS[agent]
     system_prompt = agent_config.get("system_prompt", "").strip()
+    tool_names = agent_config.get("tools", [])
+    agent_options = agent_config.get("options")
     attempts = _get_attempts(agent_config)
 
     if not attempts:
         return f"Agent '{agent}' has no available configs (check env vars)."
 
-    # Build the ordered list of (command, timeout, label) tuples
+    # Build the ordered list of (command_or_callable, timeout, label) tuples
     run_list = []
     for cfg in attempts:
         try:
-            cmd = _build_command(cfg, system_prompt, prompt)
+            backend = cfg.get("backend", "").lower()
+
+            if backend == "ollama" and tool_names:
+                # Ollama with tools — use the agentic tool loop
+                _model = cfg.get("model", "")
+                _timeout = cfg.get("timeout", 120)
+                _tool_names = list(tool_names)
+                _opts = dict(agent_options) if agent_options else None
+                _sp = system_prompt
+
+                def _make_callable(m, sp, p, tn, o, t):
+                    def _run():
+                        return run_ollama_agent(m, sp, p, tn, o, t)
+                    return _run
+
+                cmd = _make_callable(_model, _sp, prompt, _tool_names, _opts, _timeout)
+            else:
+                cmd = _build_command(cfg, system_prompt, prompt)
+
             timeout = cfg.get("timeout", 120)
             label = f"{cfg.get('backend', '?')}/{cfg.get('model', '?')}"
             run_list.append((cmd, timeout, label))
@@ -209,6 +232,239 @@ def cancel_task(task_id: str) -> str:
         task_id: The task ID to cancel.
     """
     return task_manager.cancel(task_id)
+
+
+# --- Ollama Agent Tool Support ---
+
+OLLAMA_TOOL_SCHEMAS = {
+    "read_file": {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    "write_file": {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write content to a file, creating parent directories if needed",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file"},
+                    "content": {"type": "string", "description": "Content to write"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    "edit_file": {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Find and replace text in a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file"},
+                    "find": {"type": "string", "description": "Text to find"},
+                    "replace": {"type": "string", "description": "Text to replace with"},
+                },
+                "required": ["path", "find", "replace"],
+            },
+        },
+    },
+    "bash": {
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Run a bash command and return its output",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Bash command to run"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+}
+
+
+def _ollama_read_file(path: str) -> str:
+    p = Path(path).resolve()
+    if not p.exists():
+        return f"Error: file not found: {path}"
+    try:
+        return p.read_text()
+    except Exception as e:
+        return f"Error reading file: {e}"
+
+
+def _ollama_write_file(path: str, content: str) -> str:
+    try:
+        p = Path(path).resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return f"Wrote {path}"
+    except Exception as e:
+        return f"Error writing file: {e}"
+
+
+def _ollama_edit_file(path: str, find: str, replace: str) -> str:
+    try:
+        p = Path(path).resolve()
+        if not p.exists():
+            return f"Error: file not found: {path}"
+        text = p.read_text()
+        count = text.count(find)
+        if count == 0:
+            return f"Error: text not found in {path}"
+        text = text.replace(find, replace)
+        p.write_text(text)
+        return f"Replaced {count} occurrence(s) in {path}"
+    except Exception as e:
+        return f"Error editing file: {e}"
+
+
+OLLAMA_TOOL_FUNCS = {
+    "read_file": _ollama_read_file,
+    "write_file": _ollama_write_file,
+    "edit_file": _ollama_edit_file,
+    "bash": run_bash,
+}
+
+MAX_OLLAMA_TOOL_ITERATIONS = 15
+
+
+def _ollama_chat_request(payload: dict, timeout: int = 120) -> dict:
+    """POST to Ollama /api/chat and return the parsed JSON response."""
+    url = "http://localhost:11434/api/chat"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Ollama /api/chat request failed: {e}")
+
+
+def run_ollama_agent(
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tool_names: list[str],
+    options: dict | None = None,
+    timeout: int = 120,
+) -> str:
+    """Run an Ollama agent with native tool calling via /api/chat.
+
+    Repeatedly calls the model, executes any tool calls it makes,
+    feeds results back, and returns the final text answer.
+    """
+    # Build schemas for requested tools
+    tools = []
+    for name in tool_names:
+        if name in OLLAMA_TOOL_SCHEMAS:
+            tools.append(OLLAMA_TOOL_SCHEMAS[name])
+        else:
+            logger.warning(f"Unknown Ollama tool '{name}', skipping")
+
+    if not tools:
+        # No valid tools — fall back to simple /api/generate
+        return _ollama_simple_generate(model, system_prompt, user_prompt, options, timeout)
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    opts = options or {"temperature": 0, "top_p": 0.9, "repeat_penalty": 1.1}
+    deadline = time.time() + timeout
+
+    for _ in range(MAX_OLLAMA_TOOL_ITERATIONS):
+        remaining = deadline - time.time()
+        if remaining <= 5:
+            return "Error: agent timed out"
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+            "options": opts,
+        }
+
+        try:
+            data = _ollama_chat_request(payload, timeout=min(int(remaining) - 2, 120))
+        except Exception as e:
+            return f"Error: {e}"
+
+        msg = data.get("message", {})
+        messages.append(msg)
+
+        tool_calls = msg.get("tool_calls", [])
+        if tool_calls:
+            for call in tool_calls:
+                func_info = call.get("function", {})
+                name = func_info.get("name", "")
+                args = func_info.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+
+                func = OLLAMA_TOOL_FUNCS.get(name)
+                if func:
+                    try:
+                        result = func(**args)
+                    except Exception as e:
+                        result = f"Error: {e}"
+                else:
+                    result = f"Error: unknown tool '{name}'"
+
+                messages.append({"role": "tool", "name": name, "content": str(result)})
+            continue
+
+        # No tool calls — final answer
+        content = msg.get("content", "")
+        return content.strip() if content else "(no response)"
+
+    return "Error: max tool iterations reached"
+
+
+def _ollama_simple_generate(
+    model: str, system_prompt: str, user_prompt: str,
+    options: dict | None, timeout: int,
+) -> str:
+    """Fallback for Ollama agents with no tools — uses /api/generate."""
+    full_prompt = f"{system_prompt}\n\n{user_prompt}" if system_prompt else user_prompt
+    payload = {"model": model, "prompt": full_prompt, "stream": False}
+    if options:
+        payload["options"] = options
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "http://localhost:11434/api/generate",
+        data=data_bytes,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result.get("response", "(no response)")
+    except urllib.error.URLError as e:
+        return f"Error: {e}"
 
 
 # --- Build tool declarations dynamically from agents.yaml ---

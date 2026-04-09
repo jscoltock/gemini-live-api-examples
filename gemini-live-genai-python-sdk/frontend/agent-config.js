@@ -16,6 +16,7 @@ const AgentConfigUI = (() => {
   const listEl = document.getElementById("configAgentList");
 
   const BACKENDS = ["ollama", "claude-code"];
+  const OLLAMA_TOOLS = ["read_file", "write_file", "edit_file", "bash"];
   let agents = [];
   let geminiConfig = null;
   let editingName = null; // which agent is currently in form mode (null = none)
@@ -91,6 +92,8 @@ const AgentConfigUI = (() => {
         model: "",
         timeout: 120,
         system_prompt: "",
+        tools: [],
+        options: {},
         fallbacks: [],
       });
       listEl.appendChild(form);
@@ -107,6 +110,17 @@ const AgentConfigUI = (() => {
       ? `<span class="badge">${fbCount} fallback${fbCount > 1 ? "s" : ""}</span>`
       : '<span style="color:var(--text-secondary)">no fallbacks</span>';
 
+    const tools = agent.tools || [];
+    const toolsText = tools.length > 0
+      ? `<span class="badge badge-info">${tools.length} tool${tools.length > 1 ? "s" : ""}</span>`
+      : "";
+
+    const opts = agent.options || {};
+    const optEntries = Object.entries(opts);
+    const optsText = optEntries.length > 0
+      ? optEntries.map(([k, v]) => `${k}=${v}`).join(", ")
+      : "";
+
     card.innerHTML = `
       <div class="config-card-header">
         <span class="config-card-name">${esc(agent.name)}</span>
@@ -120,7 +134,10 @@ const AgentConfigUI = (() => {
         <span>${esc(agent.backend)} / ${esc(agent.model)}</span>
         <span>${agent.timeout}s</span>
         ${fbText}
+        ${toolsText}
       </div>
+      ${tools.length > 0 ? `<div class="config-card-tools">Tools: ${tools.map(t => esc(t)).join(", ")}</div>` : ""}
+      ${optsText ? `<div class="config-card-tools">Options: ${esc(optsText)}</div>` : ""}
     `;
 
     card.querySelector('[data-action="edit"]').addEventListener("click", () => {
@@ -311,6 +328,30 @@ const AgentConfigUI = (() => {
         <textarea name="system_prompt" class="tall" placeholder="Instructions for the agent...">${esc(agent.system_prompt || "")}</textarea>
       </div>
 
+      <div class="form-section-label">Ollama Tools</div>
+      <div class="tools-checkboxes" id="toolsCheckboxes">
+        ${OLLAMA_TOOLS.map(t => {
+          const checked = (agent.tools || []).includes(t) ? "checked" : "";
+          return `<label class="tool-checkbox"><input type="checkbox" name="tool_${t}" ${checked} /> ${t}</label>`;
+        }).join("")}
+      </div>
+
+      <div class="form-section-label">Generation Options</div>
+      <div class="form-row" id="optionsFields">
+        <div class="form-group">
+          <label>Temperature</label>
+          <input type="number" step="0.1" name="opt_temperature" value="${(agent.options || {}).temperature != null ? (agent.options || {}).temperature : ""}" placeholder="0" />
+        </div>
+        <div class="form-group">
+          <label>Top P</label>
+          <input type="number" step="0.05" name="opt_top_p" value="${(agent.options || {}).top_p != null ? (agent.options || {}).top_p : ""}" placeholder="0.9" />
+        </div>
+        <div class="form-group">
+          <label>Repeat Penalty</label>
+          <input type="number" step="0.05" name="opt_repeat_penalty" value="${(agent.options || {}).repeat_penalty != null ? (agent.options || {}).repeat_penalty : ""}" placeholder="1.1" />
+        </div>
+      </div>
+
       <div class="form-section-label">Fallbacks</div>
       <div class="fallback-list" id="fallbackList">
         ${fallbackRows}
@@ -375,6 +416,22 @@ const AgentConfigUI = (() => {
     const timeout = parseInt(formEl.querySelector('[name="timeout"]').value, 10);
     const system_prompt = formEl.querySelector('[name="system_prompt"]').value.trim();
 
+    // Gather tools from checkboxes
+    const tools = [];
+    OLLAMA_TOOLS.forEach(t => {
+      const cb = formEl.querySelector(`[name="tool_${t}"]`);
+      if (cb && cb.checked) tools.push(t);
+    });
+
+    // Gather options (only include non-empty values)
+    const options = {};
+    const tempVal = formEl.querySelector('[name="opt_temperature"]').value;
+    const topPVal = formEl.querySelector('[name="opt_top_p"]').value;
+    const rpVal = formEl.querySelector('[name="opt_repeat_penalty"]').value;
+    if (tempVal !== "") options.temperature = parseFloat(tempVal);
+    if (topPVal !== "") options.top_p = parseFloat(topPVal);
+    if (rpVal !== "") options.repeat_penalty = parseFloat(rpVal);
+
     // Gather fallbacks
     const fallbacks = [];
     formEl.querySelectorAll(".fallback-row").forEach(row => {
@@ -394,6 +451,8 @@ const AgentConfigUI = (() => {
       model,
       timeout,
       system_prompt,
+      tools,
+      options: Object.keys(options).length > 0 ? options : undefined,
       fallbacks: filteredFallbacks,
     };
 

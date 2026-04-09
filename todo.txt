@@ -1,6 +1,8 @@
-are
+show the agent thinking somewhere for complete observability
 ollama tool calling make ollama to what claude code does
 multi-agent? gemini image emailed etc
+give gemma4 more context.
+accumulate the costs
 
 make all prompts optimized to use less token by being more concise
 add upload images and or files

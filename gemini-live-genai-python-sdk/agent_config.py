@@ -48,6 +48,8 @@ def list_agents() -> list[dict]:
             "model": config.get("model", ""),
             "timeout": config.get("timeout", 120),
             "system_prompt": config.get("system_prompt", ""),
+            "tools": config.get("tools", []),
+            "options": config.get("options"),
             "fallbacks": config.get("fallbacks", []),
         })
     return result
@@ -66,6 +68,8 @@ def get_agent(name: str) -> Optional[dict]:
         "model": agent.get("model", ""),
         "timeout": agent.get("timeout", 120),
         "system_prompt": agent.get("system_prompt", ""),
+        "tools": agent.get("tools", []),
+        "options": agent.get("options"),
         "fallbacks": agent.get("fallbacks", []),
     }
 
@@ -104,6 +108,24 @@ def validate_agent(data: dict, is_create: bool = False, existing_name: str = Non
         errors.append("Timeout is required")
     elif not isinstance(timeout, (int, float)) or timeout <= 0:
         errors.append("Timeout must be a positive number")
+
+    # Tools validation (optional, must be list of strings)
+    tools = data.get("tools")
+    if tools is not None:
+        if not isinstance(tools, list):
+            errors.append("Tools must be a list")
+        elif not all(isinstance(t, str) for t in tools):
+            errors.append("Each tool name must be a string")
+
+    # Options validation (optional, must be dict with numeric values)
+    options = data.get("options")
+    if options is not None:
+        if not isinstance(options, dict):
+            errors.append("Options must be a dict")
+        else:
+            for key, val in options.items():
+                if not isinstance(val, (int, float)):
+                    errors.append(f"Option '{key}' must be a number")
 
     # Fallbacks validation
     fallbacks = data.get("fallbacks", [])
@@ -277,6 +299,16 @@ def _build_agent_config(data: dict) -> dict:
 
     system_prompt = data.get("system_prompt", "").strip()
     config["system_prompt"] = system_prompt
+
+    # Tools (optional list of strings)
+    tools = data.get("tools")
+    if tools is not None:
+        config["tools"] = [str(t).strip() for t in tools if str(t).strip()]
+
+    # Options (optional dict of generation settings)
+    options = data.get("options")
+    if options is not None:
+        config["options"] = {k: v for k, v in options.items() if isinstance(v, (int, float))}
 
     fallbacks = data.get("fallbacks", [])
     if fallbacks:
