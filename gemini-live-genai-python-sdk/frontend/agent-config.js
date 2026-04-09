@@ -16,7 +16,7 @@ const AgentConfigUI = (() => {
   const listEl = document.getElementById("configAgentList");
 
   const BACKENDS = ["ollama", "claude-code"];
-  const OLLAMA_TOOLS = ["read_file", "write_file", "edit_file", "bash"];
+  let OLLAMA_TOOLS = ["read_file", "write_file", "edit_file", "bash"]; // fallback, replaced by API
   let agents = [];
   let geminiConfig = null;
   let editingName = null; // which agent is currently in form mode (null = none)
@@ -45,14 +45,21 @@ const AgentConfigUI = (() => {
 
   async function loadAgents() {
     try {
-      const [agentsRes, geminiRes] = await Promise.all([
+      const [agentsRes, geminiRes, toolsRes] = await Promise.all([
         fetch("/api/agents"),
         fetch("/api/gemini-config"),
+        fetch("/api/ollama-tools"),
       ]);
       if (!agentsRes.ok) throw new Error("Failed to load agents");
       agents = await agentsRes.json();
       if (geminiRes.ok) {
         geminiConfig = await geminiRes.json();
+      }
+      if (toolsRes.ok) {
+        const toolsData = await toolsRes.json();
+        if (toolsData.tools && toolsData.tools.length > 0) {
+          OLLAMA_TOOLS = toolsData.tools;
+        }
       }
       // Don't wipe editing state on reload — only reset if not editing
       if (!editingName) render();

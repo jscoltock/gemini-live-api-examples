@@ -324,3 +324,42 @@ def grep_files(pattern: str, path: str = ".", file_glob: str = "") -> str:
         return "Error: grep timed out"
     except Exception as e:
         return f"Error: {e}"
+
+
+# --- gws (Google Workspace) ---
+
+@ollama_tool(
+    description=(
+        "Call the gws CLI to interact with Google Workspace (Gmail, Drive, "
+        "Calendar, Sheets, Docs, etc). Examples: "
+        "'gws gmail users messages list --params \"{\\\"userId\\\": \\\"me\\\"}\"' "
+        "'gws gmail users messages send --params \"{\\\"userId\\\": \\\"me\\\"}\" --json \"{\\\"raw\\\": \\\"...\\\"}\"' "
+        "'gws drive files list --params \"{\\\"pageSize\\\": 10}\"' "
+        "Returns JSON output from the Google Workspace API."
+    ),
+    parameters={
+        "command": {
+            "type": "string",
+            "description": "Full gws CLI command (e.g. 'gws gmail users messages list --params ...')",
+        },
+    },
+    required=["command"],
+)
+def gws(command: str) -> str:
+    try:
+        cmd = command.strip()
+        if not cmd.startswith("gws"):
+            cmd = "gws " + cmd
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout.strip()
+        if result.stderr:
+            output += "\nSTDERR: " + result.stderr.strip()
+        if result.returncode != 0:
+            output += f"\nExit code: {result.returncode}"
+        return _truncate(output) if output else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: gws command timed out after 30 seconds"
+    except Exception as e:
+        return f"Error: {e}"

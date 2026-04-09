@@ -103,30 +103,27 @@ agents:
       model: qwen3.5:9b-64K
       timeout: 120
   local:
-    description: 'Local Ollama agent with file and shell tool access. Good for quick
-      file operations, running scripts, and light coding tasks that don''t need a
-      full cloud agent.
-
-      '
+    description: Local Ollama agent with file and shell tool access. Good for quick
+      file operations, running scripts, and light coding tasks that don't need a full
+      cloud agent.
     backend: ollama
     model: gemma4:e4b-64K
-
+    timeout: 300
+    system_prompt: You are a helpful coding assistant with access to filesystem and
+      shell tools. Use them to complete tasks efficiently. Be concise in your responses.
     tools:
-    - read_file
-    - write_file
-    - edit_file
     - bash
-    - list_files
+    - edit_file
+    - gws
     - grep_files
+    - list_files
+    - read_file
+    - web_fetch
+    - write_file
     options:
       temperature: 0
       top_p: 0.85
       repeat_penalty: 1.15
-    timeout: 300
-    system_prompt: 'You are a helpful coding assistant with access to filesystem and
-      shell tools. Use them to complete tasks efficiently. Be concise in your responses.
-
-      '
     fallbacks:
     - backend: ollama
       model: qwen3.5:9b-64K

@@ -1,3 +1,5 @@
+make a read me file for the current projectma
+code review tool on this codebase
 multi-agent? gemini image emailed etc
 keep ollama model in memory
 make all prompts optimized to use less token by being more concise
