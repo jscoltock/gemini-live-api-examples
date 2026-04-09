@@ -48,11 +48,6 @@ agents:
     timeout: 120
     system_prompt: You are a helpful personal assistant. Be concise and practical.
       If you don't know something, say so. Prefer short answers over long ones.
-    tools:
-    - read_file
-    - write_file
-    - edit_file
-    - bash
     fallbacks:
     - backend: claude-code
       model: glm-5.1
@@ -115,6 +110,7 @@ agents:
       '
     backend: ollama
     model: gemma4:e4b-64K
+
     tools:
     - read_file
     - write_file
