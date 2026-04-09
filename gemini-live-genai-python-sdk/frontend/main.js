@@ -26,6 +26,19 @@ let agentConfigs = {};  // agent name -> {backend, model, timeout}
 let pollInterval = null;
 let usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: "--" };
 
+// Accumulated totals persist across sessions (localStorage)
+let accumulated = JSON.parse(localStorage.getItem("usage_accumulated") || "null") || {
+  totalCost: 0,
+  totalInput: 0,
+  totalOutput: 0,
+  totalTurns: 0,
+  since: new Date().toISOString(),
+};
+
+function saveAccumulated() {
+  localStorage.setItem("usage_accumulated", JSON.stringify(accumulated));
+}
+
 const mediaHandler = new MediaHandler();
 const geminiClient = new GeminiClient({
   onOpen: () => {
@@ -51,8 +64,10 @@ const geminiClient = new GeminiClient({
       updateUsagePanel();
     }).catch(() => {});
 
-    // Reset usage counters
+    // Reset session usage counters (keep accumulated totals)
     usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: usageData.model };
+    accumulated._lastInput = 0;
+    accumulated._lastOutput = 0;
     updateUsagePanel();
 
     // Send hidden instruction
@@ -229,16 +244,33 @@ function updateUsagePanel() {
   const el = (id) => document.getElementById(id);
   const input = usageData.prompt_tokens || 0;
   const output = usageData.response_tokens || 0;
-  const total = usageData.total_tokens || 0;
 
-  // Rough cost estimate: $0.30/M input, $2.50/M output (Flash Live rates)
-  const cost = (input * 0.30 + output * 2.50) / 1_000_000;
+  // Session cost: $0.30/M input, $2.50/M output (Flash Live rates)
+  const sessionCost = (input * 0.30 + output * 2.50) / 1_000_000;
+
+  // Accumulate: usage values are session-running-totals, so delta from last seen
+  const dInput = input - (accumulated._lastInput || 0);
+  const dOutput = output - (accumulated._lastOutput || 0);
+  const dCost = (dInput * 0.30 + dOutput * 2.50) / 1_000_000;
+  if (dInput > 0 || dOutput > 0) {
+    accumulated.totalInput += dInput;
+    accumulated.totalOutput += dOutput;
+    accumulated.totalCost += dCost;
+    accumulated._lastInput = input;
+    accumulated._lastOutput = output;
+    saveAccumulated();
+  }
 
   el("usage-model").textContent = usageData.model || "--";
   el("usage-turns").textContent = usageData.turns || 0;
   el("usage-input").textContent = formatNumber(input);
   el("usage-output").textContent = formatNumber(output);
-  el("usage-cost").textContent = "$" + cost.toFixed(4);
+  el("usage-cost").textContent = "$" + sessionCost.toFixed(4);
+
+  // Accumulated totals
+  el("usage-total-cost").textContent = "$" + accumulated.totalCost.toFixed(4);
+  const since = new Date(accumulated.since);
+  el("usage-since").textContent = since.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 async function pollTasks() {
@@ -247,6 +279,8 @@ async function pollTasks() {
     if (!res.ok) return;
     const tasks = await res.json();
     for (const t of tasks) {
+      // Skip tasks that were explicitly cleared
+      if (window._clearedTaskIds && window._clearedTaskIds.has(t.id)) continue;
       const existing = agentTasks[t.id];
       if (!existing || existing.status !== t.status) {
         if (!existing) {
@@ -395,6 +429,28 @@ screenBtn.onclick = async () => {
 sendBtn.onclick = sendText;
 textInput.onkeypress = (e) => {
   if (e.key === "Enter") sendText();
+};
+
+// Reset accumulated usage totals
+document.getElementById("resetUsageBtn").onclick = () => {
+  accumulated = {
+    totalCost: 0,
+    totalInput: 0,
+    totalOutput: 0,
+    totalTurns: 0,
+    since: new Date().toISOString(),
+  };
+  saveAccumulated();
+  updateUsagePanel();
+};
+
+// Clear agent pane
+document.getElementById("clearAgentsBtn").onclick = () => {
+  const clearedIds = new Set(Object.keys(agentTasks));
+  agentList.innerHTML = "";
+  agentTasks = {};
+  // Skip re-adding these from poll
+  window._clearedTaskIds = new Set([...(window._clearedTaskIds || []), ...clearedIds]);
 };
 
 function sendText() {

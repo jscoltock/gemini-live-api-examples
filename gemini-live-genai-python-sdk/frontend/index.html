@@ -83,7 +83,10 @@
               </div>
 
               <div class="usage-panel" id="usage-panel">
-                <div class="usage-panel-header">Usage</div>
+                <div class="usage-panel-header">
+                  Usage
+                  <button id="resetUsageBtn" class="usage-reset-btn" title="Reset accumulated totals">Reset</button>
+                </div>
                 <div class="usage-body" id="usage-body">
                   <div class="usage-row">
                     <div class="usage-stat">
@@ -109,6 +112,16 @@
                       <span class="usage-value" id="usage-cost">$0.00</span>
                     </div>
                   </div>
+                  <div class="usage-row usage-accumulated">
+                    <div class="usage-stat">
+                      <span class="usage-label">Total Cost</span>
+                      <span class="usage-value" id="usage-total-cost">$0.00</span>
+                    </div>
+                    <div class="usage-stat">
+                      <span class="usage-label">Since</span>
+                      <span class="usage-value" id="usage-since">--</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -126,7 +139,10 @@
             </div>
 
             <div class="agent-panel">
-              <div class="agent-panel-header">Agents</div>
+              <div class="agent-panel-header">
+                Agents
+                <button id="clearAgentsBtn" class="usage-reset-btn" title="Clear agent history">Clear</button>
+              </div>
               <div class="agent-list" id="agent-list"></div>
             </div>
           </div>

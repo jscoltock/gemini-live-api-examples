@@ -1,20 +1,25 @@
 multi-agent? gemini image emailed etc
-give gemma4 more context.
-accumulate the costs
+keep ollama model in memory
+make all prompts optimized to use less token by being more concise
+
 the ollama configuration should be able to handle many tools not just the four we started with
 add home automation assistant - will a local model work?  Need new tool
+give local all tools claude code has
+
+button to show recent output of logs
+
+
 show the agent thinking somewhere for complete observability
 add upload images and or files
 have system determine if a local model can do a given task before giving it to a cloud model
-
-
-
-make all prompts optimized to use less token by being more concise
+show agent progress so I dont think its hung
 deal with concurrency limits on z.ai models
 add agent that is second brain - infinite memory karpathy or obsidian?
 Don't call gemini at all if not needed (no voice, VAD, images etc)
 
-
+x give gemma4 more context.
+x clear agent display
+x accumulate the costs
 x install context7
 X use smaller gemini live model (dont bother - older models cost the same amount)
 X add model and timeout to right pane 
