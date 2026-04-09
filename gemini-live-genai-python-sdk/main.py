@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
 from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel, task_manager, AGENTS
 import agent_config
+from ollama_tools import list_tools as list_ollama_tools
 
 # Load environment variables
 load_dotenv()
@@ -170,6 +171,12 @@ async def delete_agent(name: str):
         return JSONResponse({"error": message}, status_code=404)
     agent_config.reload_agents()
     return {"message": message}
+
+
+@app.get("/api/ollama-tools")
+async def get_ollama_tools():
+    """Return all registered Ollama tool names (for the UI agent editor)."""
+    return {"tools": list_ollama_tools()}
 
 
 @app.get("/api/usage")

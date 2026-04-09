@@ -109,13 +109,19 @@ def validate_agent(data: dict, is_create: bool = False, existing_name: str = Non
     elif not isinstance(timeout, (int, float)) or timeout <= 0:
         errors.append("Timeout must be a positive number")
 
-    # Tools validation (optional, must be list of strings)
+    # Tools validation (optional, must be list of strings matching registered tools)
     tools = data.get("tools")
     if tools is not None:
         if not isinstance(tools, list):
             errors.append("Tools must be a list")
         elif not all(isinstance(t, str) for t in tools):
             errors.append("Each tool name must be a string")
+        else:
+            from ollama_tools import list_tools as list_ollama_tools
+            available = set(list_ollama_tools())
+            unknown = [t for t in tools if t not in available]
+            if unknown:
+                errors.append(f"Unknown tool(s): {', '.join(unknown)}. Available: {', '.join(sorted(available))}")
 
     # Options validation (optional, must be dict with numeric values)
     options = data.get("options")

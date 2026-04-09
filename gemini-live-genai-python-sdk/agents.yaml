@@ -116,6 +116,8 @@ agents:
     - write_file
     - edit_file
     - bash
+    - list_files
+    - grep_files
     options:
       temperature: 0
       top_p: 0.85

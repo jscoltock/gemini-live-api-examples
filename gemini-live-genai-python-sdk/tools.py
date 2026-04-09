@@ -14,6 +14,7 @@ import yaml
 from google.genai import types
 
 from task_manager import TaskManager
+from ollama_tools import get_schemas, get_funcs, list_tools as list_ollama_tools
 
 logger = logging.getLogger(__name__)
 
@@ -240,117 +241,9 @@ def cancel_task(task_id: str) -> str:
 
 
 # --- Ollama Agent Tool Support ---
-
-OLLAMA_TOOL_SCHEMAS = {
-    "read_file": {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the contents of a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the file"},
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    "write_file": {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write content to a file, creating parent directories if needed",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the file"},
-                    "content": {"type": "string", "description": "Content to write"},
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    "edit_file": {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Find and replace text in a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the file"},
-                    "find": {"type": "string", "description": "Text to find"},
-                    "replace": {"type": "string", "description": "Text to replace with"},
-                },
-                "required": ["path", "find", "replace"],
-            },
-        },
-    },
-    "bash": {
-        "type": "function",
-        "function": {
-            "name": "bash",
-            "description": "Run a bash command and return its output",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "Bash command to run"},
-                },
-                "required": ["command"],
-            },
-        },
-    },
-}
-
-
-def _ollama_read_file(path: str) -> str:
-    p = Path(path).resolve()
-    if not p.exists():
-        return f"Error: file not found: {path}"
-    try:
-        text = p.read_text()
-        # Truncate to prevent overwhelming the model's context
-        max_chars = 8000
-        if len(text) > max_chars:
-            text = text[:max_chars] + f"\n... (truncated, {len(text)} total chars)"
-        return text
-    except Exception as e:
-        return f"Error reading file: {e}"
-
-
-def _ollama_write_file(path: str, content: str) -> str:
-    try:
-        p = Path(path).resolve()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-        return f"Wrote {path}"
-    except Exception as e:
-        return f"Error writing file: {e}"
-
-
-def _ollama_edit_file(path: str, find: str, replace: str) -> str:
-    try:
-        p = Path(path).resolve()
-        if not p.exists():
-            return f"Error: file not found: {path}"
-        text = p.read_text()
-        count = text.count(find)
-        if count == 0:
-            return f"Error: text not found in {path}"
-        text = text.replace(find, replace)
-        p.write_text(text)
-        return f"Replaced {count} occurrence(s) in {path}"
-    except Exception as e:
-        return f"Error editing file: {e}"
-
-
-OLLAMA_TOOL_FUNCS = {
-    "read_file": _ollama_read_file,
-    "write_file": _ollama_write_file,
-    "edit_file": _ollama_edit_file,
-    "bash": run_bash,
-}
+# Tools are now defined in ollama_tools.py using the @ollama_tool decorator.
+# Schemas and functions are resolved dynamically from the registry.
+# Use get_schemas(names) and get_funcs(names) to build what's needed at runtime.
 
 MAX_OLLAMA_TOOL_ITERATIONS = 15
 
@@ -382,15 +275,11 @@ def run_ollama_agent(
     Repeatedly calls the model, executes any tool calls it makes,
     feeds results back, and returns the final text answer.
     """
-    # Build schemas for requested tools
-    tools = []
-    for name in tool_names:
-        if name in OLLAMA_TOOL_SCHEMAS:
-            tools.append(OLLAMA_TOOL_SCHEMAS[name])
-        else:
-            logger.warning(f"Unknown Ollama tool '{name}', skipping")
+    # Build schemas and function map for requested tools from the registry
+    tool_schemas = get_schemas(tool_names)
+    tool_funcs = get_funcs(tool_names)
 
-    if not tools:
+    if not tool_schemas:
         # No valid tools — fall back to simple /api/generate
         return _ollama_simple_generate(model, system_prompt, user_prompt, options, timeout)
 
@@ -410,7 +299,7 @@ def run_ollama_agent(
         payload = {
             "model": model,
             "messages": messages,
-            "tools": tools,
+            "tools": tool_schemas,
             "stream": False,
             "options": opts,
         }
@@ -435,7 +324,7 @@ def run_ollama_agent(
                     except json.JSONDecodeError:
                         args = {}
 
-                func = OLLAMA_TOOL_FUNCS.get(name)
+                func = tool_funcs.get(name)
                 if func:
                     try:
                         result = func(**args)

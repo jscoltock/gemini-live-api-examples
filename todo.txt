@@ -1,7 +1,7 @@
 multi-agent? gemini image emailed etc
 keep ollama model in memory
 make all prompts optimized to use less token by being more concise
-
+clean up project - no need for command line or ephemeral folders
 the ollama configuration should be able to handle many tools not just the four we started with
 add home automation assistant - will a local model work?  Need new tool
 give local all tools claude code has
