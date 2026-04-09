@@ -1,4 +1,6 @@
-
+are
+ollama tool calling make ollama to what claude code does
+multi-agent? gemini image emailed etc
 
 make all prompts optimized to use less token by being more concise
 add upload images and or files
@@ -9,7 +11,7 @@ add agent that is second brain - infinite memory karpathy or obsidian?
 Don't call gemini at all if not needed (no voice, VAD, images etc)
 
 
-
+x install context7
 X use smaller gemini live model (dont bother - older models cost the same amount)
 X add model and timeout to right pane 
 X add backend harness to right pane
