@@ -134,7 +134,12 @@ def run_bash(command: str) -> str:
                 output += "\nSTDERR: " + filtered
         if result.returncode != 0:
             output += f"\nExit code: {result.returncode}"
-        return output or "(no output)"
+        output = output.strip() or "(no output)"
+        # Truncate to prevent overwhelming the model's context
+        max_chars = 8000
+        if len(output) > max_chars:
+            output = output[:max_chars] + f"\n... (truncated, {len(output)} total chars)"
+        return output
     except subprocess.TimeoutExpired:
         return "Error: command timed out after 30 seconds"
     except Exception as e:
@@ -304,7 +309,12 @@ def _ollama_read_file(path: str) -> str:
     if not p.exists():
         return f"Error: file not found: {path}"
     try:
-        return p.read_text()
+        text = p.read_text()
+        # Truncate to prevent overwhelming the model's context
+        max_chars = 8000
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n... (truncated, {len(text)} total chars)"
+        return text
     except Exception as e:
         return f"Error reading file: {e}"
 
@@ -434,12 +444,25 @@ def run_ollama_agent(
                 else:
                     result = f"Error: unknown tool '{name}'"
 
-                messages.append({"role": "tool", "name": name, "content": str(result)})
+                logger.info(f"Ollama tool call: {name}({json.dumps(args)[:100]}) -> {str(result)[:100]}")
+                messages.append({"role": "tool", "tool_name": name, "content": str(result)})
             continue
 
         # No tool calls — final answer
         content = msg.get("content", "")
-        return content.strip() if content else "(no response)"
+        if content and content.strip():
+            return content.strip()
+
+        # Empty content with no tool calls — the model finished but said nothing.
+        # This can happen when the model's work was entirely via tool calls.
+        # Return a summary of what was done instead.
+        tool_log = []
+        for m in messages:
+            if m.get("role") == "tool":
+                tool_log.append(f"- {m.get('tool_name', m.get('name','?'))}: {str(m.get('content',''))[:80]}")
+        if tool_log:
+            return f"Done. Tool calls made:\n" + "\n".join(tool_log)
+        return "(no response)"
 
     return "Error: max tool iterations reached"
 

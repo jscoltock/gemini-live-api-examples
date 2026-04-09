@@ -114,7 +114,7 @@ agents:
 
       '
     backend: ollama
-    model: gemma4:e4b
+    model: gemma4:e4b-64K
     tools:
     - read_file
     - write_file

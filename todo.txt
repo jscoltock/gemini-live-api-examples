@@ -1,14 +1,16 @@
-show the agent thinking somewhere for complete observability
-ollama tool calling make ollama to what claude code does
 multi-agent? gemini image emailed etc
 give gemma4 more context.
 accumulate the costs
+the ollama configuration should be able to handle many tools not just the four we started with
+add home automation assistant - will a local model work?  Need new tool
+show the agent thinking somewhere for complete observability
+add upload images and or files
+have system determine if a local model can do a given task before giving it to a cloud model
+
+
 
 make all prompts optimized to use less token by being more concise
-add upload images and or files
 deal with concurrency limits on z.ai models
-add home automation assistant - will a local model work?
-can local models use tools like bash, read, edit, write 
 add agent that is second brain - infinite memory karpathy or obsidian?
 Don't call gemini at all if not needed (no voice, VAD, images etc)
 
@@ -28,4 +30,5 @@ X improve UI to show more info (no space between header and rest of stufff,
                               make type a message box same width as chat pane,
                               move panes around))
 x change the system. prompt so gemini is the Chief of Staff and can do things related to vision and sound
-
+x ollama tool calling make ollama to what claude code does
+X can local models use tools like bash, read, edit, write 
