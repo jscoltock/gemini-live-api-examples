@@ -1,15 +1,14 @@
-Don't call gemini at all if not needed (no voice, VAD, images etc)
-change the system. prompt so gemini is the Chief of Staff and can do things related to vision and sound
 
 
 make all prompts optimized to use less token by being more concise
-improve system prompt for agents
 add upload images and or files
 deal with concurrency limits on z.ai models
-add home automation assistant
+add home automation assistant - will a local model work?
+can local models use tools like bash, read, edit, write 
 add agent that is second brain - infinite memory karpathy or obsidian?
-use caveman?
-test changing prompts
+Don't call gemini at all if not needed (no voice, VAD, images etc)
+
+
 
 X use smaller gemini live model (dont bother - older models cost the same amount)
 X add model and timeout to right pane 
@@ -24,5 +23,5 @@ X improve UI to show more info (no space between header and rest of stufff,
                               smaller font in chat (same as right pane,
                               make type a message box same width as chat pane,
                               move panes around))
-
+x change the system. prompt so gemini is the Chief of Staff and can do things related to vision and sound
 

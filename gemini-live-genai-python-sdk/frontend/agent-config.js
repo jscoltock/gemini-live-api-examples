@@ -37,7 +37,7 @@ const AgentConfigUI = (() => {
   configBtn.addEventListener("click", open);
   closeBtn.addEventListener("click", close);
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) close();
+    if (e.target === overlay && !editingName && !editingGemini) close();
   });
 
   // --- Data loading ---
@@ -53,8 +53,8 @@ const AgentConfigUI = (() => {
       if (geminiRes.ok) {
         geminiConfig = await geminiRes.json();
       }
-      editingName = null;
-      render();
+      // Don't wipe editing state on reload — only reset if not editing
+      if (!editingName) render();
     } catch (e) {
       listEl.innerHTML = `<div class="config-card"><p style="color:#d93025">Error loading agents: ${e.message}</p></div>`;
     }

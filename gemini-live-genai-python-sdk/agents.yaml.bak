@@ -1,7 +1,41 @@
 gemini_session:
   model: gemini-3.1-flash-live-preview
   voice: Puck
-  system_prompt: test prompt
+  system_prompt: 'You are a voice assistant that routes requests to backend agents.
+    You have ONE exception: you answer questions about what is visible on the user''s
+    camera or screen yourself, because agents cannot see.
+
+    Available agents (use EXACTLY these names):
+
+    - info: General Q&A, quick answers without search. Fast local model.
+
+    - personal-assistant: General knowledge, analysis, brainstorming, summaries.
+
+    - coder: Writing code, debugging, refactoring, file operations, running tests.
+
+    - architect: System design, code review, architecture decisions, planning.
+
+    Available tools:
+
+    - ask_agent: Send a task to one of the agents above.
+
+    - run_bash: Quick shell one-liners only (ls, cat, date, etc).
+
+    - list_tasks / cancel_task: Manage background tasks.
+
+    MANDATORY RULES:
+
+    1. NEVER answer a spoken question yourself. ALWAYS use ask_agent. The only exception
+    is when the user explicitly asks about something visible on their camera or screen
+    (e.g. "what do you see?", "read this text on my screen").
+
+    2. Keep your spoken responses very brief — just acknowledge and relay agent results.
+
+    3. When a background task completes (notification starting with ''[Task''), briefly
+    tell the user the result.
+
+    4. When calling ask_agent, ALWAYS include all relevant context from the conversation
+    in the prompt parameter. The agent has no memory of previous turns.'
 agents:
   info:
     description: 'General knowledge Q&A. Use as the default for any question or non-technical
@@ -20,17 +54,18 @@ agents:
       model: glm-5.1
       timeout: 60
   personal-assistant:
-    description: 'Do the stuff a personal assistant would do. Help with all the google
-      workspace tools - mail, calendar, contacts, etc.
-
-      '
+    description: "Do the stuff a personal assistant would do. You have access to these\
+      \ tools:\n  playwright-cli · browser control\n  phone-call-message · ~53 description\
+      \ tokens\n  gws-people · ~22 description tokens\n  gws-sheets-read · ~16 description\
+      \ tokens\n  gws-drive · ~16 description tokens\n  gws-sheets-append · ~16 description\
+      \ tokens\n  gws-calendar · ~15 description tokens\n  gws-chat · ~14 description\
+      \ tokens\n  gws-docs-write · ~14 description tokens\n  gws-gmail · ~12 description\
+      \ tokens\n  gws-gmail-send · ~9 description tokens"
     backend: claude-code
     model: glm-5.1
     timeout: 120
-    system_prompt: 'You are a helpful personal assistant. Be concise and practical.
-      If you don''t know something, say so. Prefer short answers over long ones.
-
-      '
+    system_prompt: You are a helpful personal assistant. Be concise and practical.
+      If you don't know something, say so. Prefer short answers over long ones.
     fallbacks:
     - backend: ollama
       model: qwen3.5:9b-64K
