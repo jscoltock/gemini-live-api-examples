@@ -511,6 +511,29 @@ textInput.onkeypress = (e) => {
   if (e.key === "Enter") sendText();
 };
 
+// Fullscreen toggle for chat pane
+const centerPanel = document.getElementById("center-panel");
+const fullscreenBtn = document.getElementById("fullscreenBtn");
+const fsExpand = fullscreenBtn.querySelector(".fs-expand");
+const fsContract = fullscreenBtn.querySelector(".fs-contract");
+
+fullscreenBtn.onclick = () => {
+  const isFs = centerPanel.classList.toggle("fullscreen");
+  fsExpand.style.display = isFs ? "none" : "";
+  fsContract.style.display = isFs ? "" : "none";
+  // Scroll chat to bottom after layout settles
+  setTimeout(() => { chatLog.scrollTop = chatLog.scrollHeight; }, 100);
+};
+
+// Escape key exits fullscreen
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && centerPanel.classList.contains("fullscreen")) {
+    centerPanel.classList.remove("fullscreen");
+    fsExpand.style.display = "";
+    fsContract.style.display = "none";
+  }
+});
+
 // Reset accumulated usage totals
 document.getElementById("resetUsageBtn").onclick = () => {
   accumulated = {
