@@ -1,4 +1,4 @@
-# Gemini Live API - Python SDK & Vanilla JS
+# Gemini Live API - Python SDK & Vanilla JS (Updated)
 
 A demonstration of the Gemini Live API using the [Google Gen AI Python SDK](https://github.com/googleapis/python-genai) for the backend and vanilla JavaScript for the frontend. This example shows how to build a real-time multimodal application with a robust Python backend handling the API connection.
 

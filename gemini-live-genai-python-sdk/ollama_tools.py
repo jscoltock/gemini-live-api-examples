@@ -326,32 +326,13 @@ def grep_files(pattern: str, path: str = ".", file_glob: str = "") -> str:
         return f"Error: {e}"
 
 
-# --- gws (Google Workspace) ---
+# --- Google Workspace tools (using gws CLI helper commands) ---
 
-@ollama_tool(
-    description=(
-        "Call the gws CLI to interact with Google Workspace (Gmail, Drive, "
-        "Calendar, Sheets, Docs, etc). Examples: "
-        "'gws gmail users messages list --params \"{\\\"userId\\\": \\\"me\\\"}\"' "
-        "'gws gmail users messages send --params \"{\\\"userId\\\": \\\"me\\\"}\" --json \"{\\\"raw\\\": \\\"...\\\"}\"' "
-        "'gws drive files list --params \"{\\\"pageSize\\\": 10}\"' "
-        "Returns JSON output from the Google Workspace API."
-    ),
-    parameters={
-        "command": {
-            "type": "string",
-            "description": "Full gws CLI command (e.g. 'gws gmail users messages list --params ...')",
-        },
-    },
-    required=["command"],
-)
-def gws(command: str) -> str:
+def _run_gws(args: list[str], timeout: int = 30) -> str:
+    """Run a gws CLI command with list-form args (no shell escaping issues)."""
     try:
-        cmd = command.strip()
-        if not cmd.startswith("gws"):
-            cmd = "gws " + cmd
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+            ["gws"] + args, capture_output=True, text=True, timeout=timeout
         )
         output = result.stdout.strip()
         if result.stderr:
@@ -363,3 +344,428 @@ def gws(command: str) -> str:
         return "Error: gws command timed out after 30 seconds"
     except Exception as e:
         return f"Error: {e}"
+
+
+# --- gmail_send ---
+
+@ollama_tool(
+    description=(
+        "Send an email via Gmail. Handles RFC 2822 formatting and base64 "
+        "encoding automatically. Use this for all outgoing emails."
+    ),
+    parameters={
+        "to": {
+            "type": "string",
+            "description": "Recipient email address(es), comma-separated for multiple",
+        },
+        "subject": {
+            "type": "string",
+            "description": "Email subject line",
+        },
+        "body": {
+            "type": "string",
+            "description": "Email body (plain text, or HTML if html=true)",
+        },
+        "cc": {
+            "type": "string",
+            "description": "CC email address(es), comma-separated (optional)",
+        },
+        "bcc": {
+            "type": "string",
+            "description": "BCC email address(es), comma-separated (optional)",
+        },
+        "html": {
+            "type": "boolean",
+            "description": "Set true to send body as HTML (default: plain text)",
+        },
+    },
+    required=["to", "subject", "body"],
+)
+def gmail_send(to: str, subject: str, body: str, cc: str = "", bcc: str = "", html: bool = False) -> str:
+    args = ["gmail", "+send", "--to", to, "--subject", subject, "--body", body]
+    if cc:
+        args.extend(["--cc", cc])
+    if bcc:
+        args.extend(["--bcc", bcc])
+    if html:
+        args.append("--html")
+    return _run_gws(args)
+
+
+# --- gmail_triage ---
+
+@ollama_tool(
+    description=(
+        "Show unread inbox summary (sender, subject, date). "
+        "Use to check what emails have come in. Read-only."
+    ),
+    parameters={
+        "query": {
+            "type": "string",
+            "description": "Gmail search query (default: is:unread). Examples: 'from:boss', 'subject:urgent', 'is:unread'",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum messages to show (default: 20)",
+        },
+    },
+    required=[],
+)
+def gmail_triage(query: str = "is:unread", max_results: int = 20) -> str:
+    args = ["gmail", "+triage", "--query", query, "--max", str(max_results)]
+    return _run_gws(args)
+
+
+# --- gmail_reply ---
+
+@ollama_tool(
+    description=(
+        "Reply to a Gmail message. Handles threading (In-Reply-To, References, threadId) "
+        "automatically. Quotes the original message in the reply body."
+    ),
+    parameters={
+        "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to reply to",
+        },
+        "body": {
+            "type": "string",
+            "description": "Reply body text (plain text, or HTML if html=true)",
+        },
+        "cc": {
+            "type": "string",
+            "description": "Additional CC email address(es), comma-separated (optional)",
+        },
+        "html": {
+            "type": "boolean",
+            "description": "Set true to send body as HTML (default: plain text)",
+        },
+    },
+    required=["message_id", "body"],
+)
+def gmail_reply(message_id: str, body: str, cc: str = "", html: bool = False) -> str:
+    args = ["gmail", "+reply", "--message-id", message_id, "--body", body]
+    if cc:
+        args.extend(["--cc", cc])
+    if html:
+        args.append("--html")
+    return _run_gws(args)
+
+
+# --- gmail_forward ---
+
+@ollama_tool(
+    description=(
+        "Forward a Gmail message to new recipients. Includes the original "
+        "message with sender, date, subject, and recipients."
+    ),
+    parameters={
+        "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to forward",
+        },
+        "to": {
+            "type": "string",
+            "description": "Recipient email address(es), comma-separated",
+        },
+        "body": {
+            "type": "string",
+            "description": "Optional note to include above the forwarded message",
+        },
+    },
+    required=["message_id", "to"],
+)
+def gmail_forward(message_id: str, to: str, body: str = "") -> str:
+    args = ["gmail", "+forward", "--message-id", message_id, "--to", to]
+    if body:
+        args.extend(["--body", body])
+    return _run_gws(args)
+
+
+# --- gmail_read ---
+
+@ollama_tool(
+    description=(
+        "Read a specific Gmail message by ID. Returns full message content "
+        "(headers, body, labels). Use gmail_triage first to find message IDs."
+    ),
+    parameters={
+        "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to read",
+        },
+    },
+    required=["message_id"],
+)
+def gmail_read(message_id: str) -> str:
+    args = [
+        "gmail", "users", "messages", "get",
+        "--params", _json.dumps({"userId": "me", "id": message_id, "format": "full"}),
+    ]
+    return _run_gws(args)
+
+
+# --- gmail_search ---
+
+@ollama_tool(
+    description=(
+        "Search Gmail messages. Returns a list of matching message IDs and snippets. "
+        "Use gmail_read to get full content of a specific message."
+    ),
+    parameters={
+        "query": {
+            "type": "string",
+            "description": "Gmail search query. Examples: 'from:someone@example.com', 'subject:meeting', 'newer_than:7d'",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum messages to return (default: 10)",
+        },
+    },
+    required=["query"],
+)
+def gmail_search(query: str, max_results: int = 10) -> str:
+    args = [
+        "gmail", "users", "messages", "list",
+        "--params", _json.dumps({"userId": "me", "q": query, "maxResults": max_results}),
+    ]
+    return _run_gws(args)
+
+
+# --- calendar_agenda ---
+
+@ollama_tool(
+    description=(
+        "Show upcoming calendar events. Read-only. "
+        "Defaults to showing upcoming events across all calendars."
+    ),
+    parameters={
+        "period": {
+            "type": "string",
+            "description": "Time period: 'today', 'tomorrow', 'week', or a number of days (e.g. '3'). Default: shows next few days.",
+        },
+        "calendar": {
+            "type": "string",
+            "description": "Filter to specific calendar name or ID (optional)",
+        },
+    },
+    required=[],
+)
+def calendar_agenda(period: str = "", calendar: str = "") -> str:
+    args = ["calendar", "+agenda"]
+    if period == "today":
+        args.append("--today")
+    elif period == "tomorrow":
+        args.append("--tomorrow")
+    elif period == "week":
+        args.append("--week")
+    elif period.isdigit():
+        args.extend(["--days", period])
+    if calendar:
+        args.extend(["--calendar", calendar])
+    return _run_gws(args)
+
+
+# --- calendar_insert ---
+
+@ollama_tool(
+    description=(
+        "Create a new calendar event. Times in RFC 3339 format "
+        "(e.g. '2026-06-17T09:00:00-07:00')."
+    ),
+    parameters={
+        "summary": {
+            "type": "string",
+            "description": "Event title/summary",
+        },
+        "start": {
+            "type": "string",
+            "description": "Start time in RFC 3339 format (e.g. 2026-06-17T09:00:00-07:00)",
+        },
+        "end": {
+            "type": "string",
+            "description": "End time in RFC 3339 format",
+        },
+        "attendees": {
+            "type": "string",
+            "description": "Attendee email(s), comma-separated (optional)",
+        },
+        "location": {
+            "type": "string",
+            "description": "Event location (optional)",
+        },
+        "description": {
+            "type": "string",
+            "description": "Event description (optional)",
+        },
+    },
+    required=["summary", "start", "end"],
+)
+def calendar_insert(
+    summary: str, start: str, end: str,
+    attendees: str = "", location: str = "", description: str = "",
+) -> str:
+    args = ["calendar", "+insert", "--summary", summary, "--start", start, "--end", end]
+    if attendees:
+        for addr in attendees.split(","):
+            args.extend(["--attendee", addr.strip()])
+    if location:
+        args.extend(["--location", location])
+    if description:
+        args.extend(["--description", description])
+    return _run_gws(args)
+
+
+# --- sheets_read ---
+
+@ollama_tool(
+    description=(
+        "Read values from a Google Sheets spreadsheet. Read-only."
+    ),
+    parameters={
+        "spreadsheet_id": {
+            "type": "string",
+            "description": "Spreadsheet ID (from the URL)",
+        },
+        "range": {
+            "type": "string",
+            "description": "Range to read (e.g. 'Sheet1!A1:D10' or 'Sheet1')",
+        },
+    },
+    required=["spreadsheet_id", "range"],
+)
+def sheets_read(spreadsheet_id: str, range: str) -> str:
+    return _run_gws(["sheets", "+read", "--spreadsheet", spreadsheet_id, "--range", range])
+
+
+# --- sheets_append ---
+
+@ollama_tool(
+    description=(
+        "Append row(s) to a Google Sheets spreadsheet. "
+        "Use values for a single row of simple strings, or json_values for multiple rows."
+    ),
+    parameters={
+        "spreadsheet_id": {
+            "type": "string",
+            "description": "Spreadsheet ID (from the URL)",
+        },
+        "values": {
+            "type": "string",
+            "description": "Comma-separated values for a single row (e.g. 'Alice,100,true')",
+        },
+        "json_values": {
+            "type": "string",
+            "description": "JSON array of rows for multi-row insert (e.g. '[[\"a\",\"b\"],[\"c\",\"d\"]]')",
+        },
+    },
+    required=["spreadsheet_id"],
+)
+def sheets_append(spreadsheet_id: str, values: str = "", json_values: str = "") -> str:
+    args = ["sheets", "+append", "--spreadsheet", spreadsheet_id]
+    if values:
+        args.extend(["--values", values])
+    if json_values:
+        args.extend(["--json-values", json_values])
+    return _run_gws(args)
+
+
+# --- docs_write ---
+
+@ollama_tool(
+    description=(
+        "Append text to a Google Docs document. Text is inserted at the end."
+    ),
+    parameters={
+        "document_id": {
+            "type": "string",
+            "description": "Google Docs document ID (from the URL)",
+        },
+        "text": {
+            "type": "string",
+            "description": "Text to append",
+        },
+    },
+    required=["document_id", "text"],
+)
+def docs_write(document_id: str, text: str) -> str:
+    return _run_gws(["docs", "+write", "--document", document_id, "--text", text])
+
+
+# --- drive_upload ---
+
+@ollama_tool(
+    description=(
+        "Upload a local file to Google Drive. MIME type detected automatically."
+    ),
+    parameters={
+        "file_path": {
+            "type": "string",
+            "description": "Local path to the file to upload",
+        },
+        "name": {
+            "type": "string",
+            "description": "Target filename in Drive (defaults to source filename)",
+        },
+        "parent": {
+            "type": "string",
+            "description": "Parent folder ID in Drive (optional, defaults to root)",
+        },
+    },
+    required=["file_path"],
+)
+def drive_upload(file_path: str, name: str = "", parent: str = "") -> str:
+    args = ["drive", "+upload", file_path]
+    if name:
+        args.extend(["--name", name])
+    if parent:
+        args.extend(["--parent", parent])
+    return _run_gws(args)
+
+
+# --- drive_list ---
+
+@ollama_tool(
+    description=(
+        "List files in Google Drive. Returns file IDs, names, and mime types."
+    ),
+    parameters={
+        "page_size": {
+            "type": "integer",
+            "description": "Number of files to return (default: 10)",
+        },
+        "query": {
+            "type": "string",
+            "description": "Drive query filter (e.g. \"name contains 'report'\", \"mimeType='application/vnd.google-apps.folder'\")",
+        },
+    },
+    required=[],
+)
+def drive_list(page_size: int = 10, query: str = "") -> str:
+    params: dict = {"pageSize": page_size}
+    if query:
+        params["q"] = query
+    args = ["drive", "files", "list", "--params", _json.dumps(params)]
+    return _run_gws(args)
+
+
+# --- people_search ---
+
+@ollama_tool(
+    description=(
+        "Search Google Contacts. Returns names and email addresses."
+    ),
+    parameters={
+        "query": {
+            "type": "string",
+            "description": "Name or email to search for",
+        },
+    },
+    required=["query"],
+)
+def people_search(query: str) -> str:
+    args = [
+        "people", "people", "searchContacts",
+        "--params", _json.dumps({"query": query, "readMask": "names,emailAddresses"}),
+    ]
+    return _run_gws(args)

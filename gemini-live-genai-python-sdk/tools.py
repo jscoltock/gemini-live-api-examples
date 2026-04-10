@@ -186,8 +186,8 @@ def ask_agent(agent: str, prompt: str) -> str:
                 _sp = system_prompt
 
                 def _make_callable(m, sp, p, tn, o, t):
-                    def _run():
-                        return run_ollama_agent(m, sp, p, tn, o, t)
+                    def _run(trace_callback=None):
+                        return run_ollama_agent(m, sp, p, tn, o, t, trace_callback=trace_callback)
                     return _run
 
                 cmd = _make_callable(_model, _sp, prompt, _tool_names, _opts, _timeout)
@@ -269,12 +269,23 @@ def run_ollama_agent(
     tool_names: list[str],
     options: dict | None = None,
     timeout: int = 120,
+    trace_callback=None,
 ) -> str:
     """Run an Ollama agent with native tool calling via /api/chat.
 
     Repeatedly calls the model, executes any tool calls it makes,
     feeds results back, and returns the final text answer.
+
+    If trace_callback is provided, it's called with dicts describing each step:
+      {"type": "thinking", "data": {"content": "..."}}
+      {"type": "tool_call", "data": {"name": "...", "args": {...}}}
+      {"type": "tool_result", "data": {"name": "...", "result": "..."}}
+      {"type": "response", "data": {"content": "..."}}
     """
+    def _trace(event: dict):
+        if trace_callback:
+            trace_callback(event)
+
     # Build schemas and function map for requested tools from the registry
     tool_schemas = get_schemas(tool_names)
     tool_funcs = get_funcs(tool_names)
@@ -294,6 +305,7 @@ def run_ollama_agent(
     for _ in range(MAX_OLLAMA_TOOL_ITERATIONS):
         remaining = deadline - time.time()
         if remaining <= 5:
+            _trace({"type": "error", "data": {"message": "Agent timed out"}})
             return "Error: agent timed out"
 
         payload = {
@@ -307,10 +319,21 @@ def run_ollama_agent(
         try:
             data = _ollama_chat_request(payload, timeout=min(int(remaining) - 2, 120))
         except Exception as e:
+            _trace({"type": "error", "data": {"message": str(e)}})
             return f"Error: {e}"
 
         msg = data.get("message", {})
         messages.append(msg)
+
+        # Emit thinking if present (some models include chain-of-thought)
+        thinking = msg.get("thinking", "")
+        if thinking:
+            _trace({"type": "thinking", "data": {"content": thinking[:2000]}})
+
+        # Emit any text content the model produced alongside tool calls
+        text_content = msg.get("content", "")
+        if text_content and text_content.strip():
+            _trace({"type": "response", "data": {"content": text_content[:2000]}})
 
         tool_calls = msg.get("tool_calls", [])
         if tool_calls:
@@ -324,6 +347,8 @@ def run_ollama_agent(
                     except json.JSONDecodeError:
                         args = {}
 
+                _trace({"type": "tool_call", "data": {"name": name, "args": args}})
+
                 func = tool_funcs.get(name)
                 if func:
                     try:
@@ -332,6 +357,8 @@ def run_ollama_agent(
                         result = f"Error: {e}"
                 else:
                     result = f"Error: unknown tool '{name}'"
+
+                _trace({"type": "tool_result", "data": {"name": name, "result": str(result)[:2000]}})
 
                 logger.info(f"Ollama tool call: {name}({json.dumps(args)[:100]}) -> {str(result)[:100]}")
                 messages.append({"role": "tool", "tool_name": name, "content": str(result)})
@@ -353,6 +380,7 @@ def run_ollama_agent(
             return f"Done. Tool calls made:\n" + "\n".join(tool_log)
         return "(no response)"
 
+    _trace({"type": "error", "data": {"message": "Max tool iterations reached"}})
     return "Error: max tool iterations reached"
 
 

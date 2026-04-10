@@ -1184,3 +1184,119 @@ input[type="text"] {
   line-height: 1.5 !important;
   min-height: 280px !important;
 }
+
+/* ===== Agent Trace Timeline ===== */
+
+.task-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.task-header:hover {
+  opacity: 0.85;
+}
+
+.trace-toggle {
+  float: right;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  padding: 0 0.25rem;
+  transition: transform 0.15s;
+}
+
+.trace-container {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.trace-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  border-radius: 3px;
+  background: var(--surface-color);
+  border-left: 2px solid var(--border-color);
+}
+
+.trace-item:hover {
+  background: var(--bg-color);
+}
+
+.trace-ts {
+  font-family: monospace;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 58px;
+}
+
+.trace-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: center;
+}
+
+.trace-badge-thinking { background: #e8f0fe; color: #1a73e8; }
+.trace-badge-tool_call { background: #fef7e0; color: #e37400; }
+.trace-badge-tool_result { background: #e6f4ea; color: #137333; }
+.trace-badge-response { background: #e6f4ea; color: #1e8e3e; }
+.trace-badge-attempt { background: #f1f3f4; color: #5f6368; }
+.trace-badge-error { background: #fce8e6; color: #d93025; }
+
+.trace-text {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.trace-tool-name {
+  font-family: monospace;
+  color: #e37400;
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trace-tool-result {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+.trace-result-label {
+  font-weight: 700;
+  color: #137333;
+  font-family: monospace;
+}
+
+.trace-attempt {
+  font-family: monospace;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.trace-error {
+  color: #d93025;
+  font-weight: 600;
+  flex: 1;
+}

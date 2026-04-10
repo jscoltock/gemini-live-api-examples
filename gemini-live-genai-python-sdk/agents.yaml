@@ -15,7 +15,8 @@ gemini_session:
 
     - architect: System design, code review, architecture decisions, planning.
 
-    - local: Local Ollama agent with file and shell tools. Good for quick file operations,
+    - local: Local Ollama agent with email, calendar, contacts, Drive, Sheets, Docs,
+    file system, and shell tools. Good for Google Workspace tasks, file operations,
     running scripts, and light coding tasks.
 
     Available tools:
@@ -34,11 +35,15 @@ gemini_session:
 
     2. Keep your spoken responses very brief — just acknowledge and relay agent results.
 
-    3. When a background task completes (notification starting with ''[Task''), briefly
-    tell the user the result.
+    3. When a background task completes (notification starting with ''[Task''), read
+    the agent''s output from the notification and relay the FULL results to the user.
+    Do NOT summarize — present the agent''s output as-is so the user sees everything.
 
     4. When calling ask_agent, ALWAYS include all relevant context from the conversation
-    in the prompt parameter. The agent has no memory of previous turns.'
+    in the prompt parameter. The agent has no memory of previous turns.
+
+    5. If the user names a specific agent (e.g. ''use the local agent'', ''ask coder''),
+    use THAT agent. Do not override the user''s choice based on task type.'
 agents:
   info:
     description: General knowledge Q&A. Use as the default for any question or non-technical
@@ -109,15 +114,29 @@ agents:
     backend: ollama
     model: gemma4:e4b-64K
     timeout: 300
-    system_prompt: You are a helpful coding assistant with access to filesystem and
-      shell tools. Use them to complete tasks efficiently. Be concise in your responses.
+    system_prompt: You are a helpful assistant with access to filesystem, shell,
+      email, calendar, contacts, Drive, Sheets, and Docs tools. Use them to complete
+      tasks efficiently. Be concise in your responses.
     tools:
     - bash
+    - calendar_agenda
+    - calendar_insert
+    - docs_write
+    - drive_list
+    - drive_upload
     - edit_file
-    - gws
+    - gmail_forward
+    - gmail_read
+    - gmail_reply
+    - gmail_search
+    - gmail_send
+    - gmail_triage
     - grep_files
     - list_files
+    - people_search
     - read_file
+    - sheets_append
+    - sheets_read
     - web_fetch
     - write_file
     options:

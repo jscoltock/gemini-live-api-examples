@@ -21,7 +21,7 @@ const agentList = document.getElementById("agent-list");
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
 let voiceEnabled = false;
-let agentTasks = {};  // taskId -> {element, status, startTime}
+let agentTasks = {};  // taskId -> {element, status, startTime, trace}
 let agentConfigs = {};  // agent name -> {backend, model, timeout}
 let pollInterval = null;
 let usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: "--" };
@@ -171,17 +171,27 @@ function addAgentTask(taskId, agent, prompt) {
   card.className = "agent-task running";
   card.id = `task-${taskId}`;
   card.innerHTML = `
-    <div>
+    <div class="task-header" data-task-id="${taskId}">
       <span class="task-agent">${escapeHtml(agent)}</span>
       <span class="task-id">${taskId}</span>
       <span class="task-status status-running">running</span>
+      <span class="trace-toggle" title="Toggle trace">&#9654;</span>
     </div>
     <div class="task-meta">${escapeHtml(meta.join(" | "))}</div>
     <div class="task-prompt">${escapeHtml(prompt)}</div>
     <div class="task-time">${new Date().toLocaleTimeString()}</div>
+    <div class="trace-container hidden" id="trace-${taskId}"></div>
   `;
   agentList.prepend(card);
-  agentTasks[taskId] = { element: card, status: "running", startTime: Date.now() };
+  agentTasks[taskId] = { element: card, status: "running", startTime: Date.now(), trace: [] };
+
+  // Click handler for toggling trace
+  card.querySelector(".task-header").addEventListener("click", () => {
+    const traceEl = document.getElementById(`trace-${taskId}`);
+    traceEl.classList.toggle("hidden");
+    const toggle = card.querySelector(".trace-toggle");
+    toggle.textContent = traceEl.classList.contains("hidden") ? "\u25B6" : "\u25BC";
+  });
 }
 
 function updateAgentTask(taskId, status, output) {
@@ -230,6 +240,56 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// --- Trace Rendering ---
+
+function renderTrace(taskId, traceEvents) {
+  const traceEl = document.getElementById(`trace-${taskId}`);
+  if (!traceEl || !traceEvents || !traceEvents.length) return;
+
+  // Store latest trace for this task
+  const task = agentTasks[taskId];
+  if (task) task.trace = traceEvents;
+
+  traceEl.innerHTML = "";
+  for (const evt of traceEvents) {
+    const item = document.createElement("div");
+    item.className = `trace-item trace-${evt.type}`;
+
+    const ts = evt.ts ? new Date(evt.ts).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
+    const badge = `<span class="trace-badge trace-badge-${evt.type}">${evt.type.replace("_"," ")}</span>`;
+
+    let content = "";
+    const d = evt.data || {};
+
+    switch (evt.type) {
+      case "thinking":
+        content = `<div class="trace-text">${escapeHtml(d.content || "")}</div>`;
+        break;
+      case "tool_call":
+        content = `<div class="trace-tool-name">${escapeHtml(d.name || "?")}(${escapeHtml(JSON.stringify(d.args || {}))})</div>`;
+        break;
+      case "tool_result":
+        content = `<div class="trace-tool-result"><span class="trace-result-label">${escapeHtml(d.name || "?")}:</span> ${escapeHtml((d.result || "").substring(0, 500))}</div>`;
+        break;
+      case "response":
+        content = `<div class="trace-text">${escapeHtml(d.content || "")}</div>`;
+        break;
+      case "attempt":
+        content = `<div class="trace-attempt">${d.fallback ? "fallback" : "primary"}: ${escapeHtml(d.label || "?")}</div>`;
+        break;
+      case "error":
+        content = `<div class="trace-error">${escapeHtml(d.message || "unknown error")}</div>`;
+        break;
+      default:
+        content = `<div class="trace-text">${escapeHtml(JSON.stringify(d).substring(0, 200))}</div>`;
+    }
+
+    item.innerHTML = `<span class="trace-ts">${ts}</span>${badge}${content}`;
+    traceEl.appendChild(item);
+  }
+  traceEl.scrollTop = traceEl.scrollHeight;
 }
 
 // --- Usage Panel ---
@@ -289,13 +349,15 @@ async function pollTasks() {
           card.className = `agent-task ${t.status}`;
           card.id = `task-${t.id}`;
           card.innerHTML = `
-            <div>
+            <div class="task-header" data-task-id="${t.id}">
               <span class="task-agent">${t.agent || "unknown"}</span>
               <span class="task-id">${t.id}</span>
               <span class="task-status status-${t.status}">${t.status}</span>
+              ${(t.trace && t.trace.length) ? '<span class="trace-toggle" title="Toggle trace">&#9654;</span>' : ''}
             </div>
             <div class="task-prompt">${escapeHtml((t.command || "").substring(0, 100))}</div>
             <div class="task-time">${new Date().toLocaleTimeString()}</div>
+            <div class="trace-container hidden" id="trace-${t.id}"></div>
           `;
           if (t.output) {
             const outputEl = document.createElement("div");
@@ -304,10 +366,28 @@ async function pollTasks() {
             card.appendChild(outputEl);
           }
           agentList.prepend(card);
-          agentTasks[t.id] = { element: card, status: t.status, startTime: Date.now() };
+          agentTasks[t.id] = { element: card, status: t.status, startTime: Date.now(), trace: t.trace || [] };
+
+          // Click handler for toggling trace
+          card.querySelector(".task-header").addEventListener("click", () => {
+            const traceEl = document.getElementById(`trace-${t.id}`);
+            traceEl.classList.toggle("hidden");
+            const toggle = card.querySelector(".trace-toggle");
+            if (toggle) toggle.textContent = traceEl.classList.contains("hidden") ? "\u25B6" : "\u25BC";
+          });
+
+          // Render trace if present
+          if (t.trace && t.trace.length) {
+            renderTrace(t.id, t.trace);
+          }
         } else {
           updateAgentTask(t.id, t.status, t.output);
         }
+      }
+
+      // Always update trace for existing tasks (grows as agent runs)
+      if (t.trace && t.trace.length) {
+        renderTrace(t.id, t.trace);
       }
     }
   } catch (e) {
