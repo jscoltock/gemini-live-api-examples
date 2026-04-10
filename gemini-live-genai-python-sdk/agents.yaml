@@ -16,8 +16,9 @@ gemini_session:
     - architect: System design, code review, architecture decisions, planning.
 
     - local: Local Ollama agent with email, calendar, contacts, Drive, Sheets, Docs,
-    file system, and shell tools. Good for Google Workspace tasks, file operations,
-    running scripts, and light coding tasks.
+    Twilio (calls & SMS), file system, and shell tools. Good for Google Workspace
+    tasks, phone calls, texting, file operations, running scripts, and light coding
+    tasks.
 
     Available tools:
 
@@ -115,8 +116,8 @@ agents:
     model: gemma4:e4b-64K
     timeout: 300
     system_prompt: You are a helpful assistant with access to filesystem, shell,
-      email, calendar, contacts, Drive, Sheets, and Docs tools. Use them to complete
-      tasks efficiently. Be concise in your responses.
+      email, calendar, contacts, Drive, Sheets, Docs, and Twilio (phone calls &
+      SMS) tools. Use them to complete tasks efficiently. Be concise in your responses.
     tools:
     - bash
     - calendar_agenda
@@ -137,7 +138,13 @@ agents:
     - read_file
     - sheets_append
     - sheets_read
-    - web_fetch
+    - twilio_call
+    - twilio_list_calls
+    - twilio_list_messages
+    - twilio_sms
+    - web_extract_pages
+    - web_search
+    - web_search_news
     - write_file
     options:
       temperature: 0

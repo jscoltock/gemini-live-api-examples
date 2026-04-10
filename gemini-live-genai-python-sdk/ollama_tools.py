@@ -769,3 +769,269 @@ def people_search(query: str) -> str:
         "--params", _json.dumps({"query": query, "readMask": "names,emailAddresses"}),
     ]
     return _run_gws(args)
+
+
+# --- Twilio tools (using Twilio Python SDK via phone-call-message skill venv) ---
+
+_TWILIO_VENV_PYTHON = (
+    "/Users/jscoltock/.claude/skills/phone-call-message/.venv/bin/python3"
+)
+_TWILIO_HELPER = (
+    "/Users/jscoltock/.claude/skills/phone-call-message/scripts/twilio_helper.py"
+)
+
+
+def _run_twilio(subcommand: str, args: list[str], timeout: int = 30) -> str:
+    """Run a twilio_helper.py subcommand with list-form args."""
+    try:
+        result = subprocess.run(
+            [_TWILIO_VENV_PYTHON, _TWILIO_HELPER, subcommand] + args,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        output = result.stdout.strip()
+        if result.stderr:
+            filtered = "\n".join(
+                line for line in result.stderr.strip().splitlines()
+                if "DeprecationWarning" not in line
+            )
+            if filtered.strip():
+                output += "\nSTDERR: " + filtered
+        if result.returncode != 0:
+            output += f"\nExit code: {result.returncode}"
+        return _truncate(output) if output else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Twilio command timed out"
+    except FileNotFoundError:
+        return (
+            "Error: Twilio helper not found. Ensure "
+            "~/.claude/skills/phone-call-message/ exists with .venv."
+        )
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# --- twilio_call ---
+
+@ollama_tool(
+    description=(
+        "Make a phone call that speaks a text-to-speech message to the recipient. "
+        "The recipient hears the message read aloud. Returns the call SID and status."
+    ),
+    parameters={
+        "to": {
+            "type": "string",
+            "description": "Phone number in E.164 format (e.g. +15551234567)",
+        },
+        "message": {
+            "type": "string",
+            "description": "The text to speak during the call",
+        },
+        "voice": {
+            "type": "string",
+            "description": "TTS voice to use (default: Polly.Matthew). Examples: Polly.Matthew, Polly.Joanna, alice.",
+        },
+    },
+    required=["to", "message"],
+)
+def twilio_call(to: str, message: str, voice: str = "") -> str:
+    args = [to, message]
+    if voice:
+        args.append(voice)
+    return _run_twilio("call", args)
+
+
+# --- twilio_sms ---
+
+@ollama_tool(
+    description=(
+        "Send an SMS text message. Returns the message SID and status."
+    ),
+    parameters={
+        "to": {
+            "type": "string",
+            "description": "Phone number in E.164 format (e.g. +15551234567)",
+        },
+        "body": {
+            "type": "string",
+            "description": "SMS message text (max 1600 chars)",
+        },
+    },
+    required=["to", "body"],
+)
+def twilio_sms(to: str, body: str) -> str:
+    return _run_twilio("sms", [to, body])
+
+
+# --- twilio_list_calls ---
+
+@ollama_tool(
+    description=(
+        "List recent phone calls. Returns call SID, from/to numbers, status, "
+        "time, and duration. Read-only."
+    ),
+    parameters={
+        "limit": {
+            "type": "integer",
+            "description": "Maximum number of calls to return (default: 10)",
+        },
+    },
+    required=[],
+)
+def twilio_list_calls(limit: int = 10) -> str:
+    return _run_twilio("list-calls", [str(limit)])
+
+
+# --- twilio_list_messages ---
+
+@ollama_tool(
+    description=(
+        "List recent SMS messages. Returns message SID, from/to numbers, status, "
+        "date, and body preview. Read-only."
+    ),
+    parameters={
+        "limit": {
+            "type": "integer",
+            "description": "Maximum number of messages to return (default: 10)",
+        },
+    },
+    required=[],
+)
+def twilio_list_messages(limit: int = 10) -> str:
+    return _run_twilio("list-messages", [str(limit)])
+
+
+# --- Tavily tools (web search & extract via Tavily API, raw urllib) ---
+
+import os as _os
+import urllib.request as _urllib_request
+import urllib.error as _urllib_error
+
+
+def _get_tavily_key() -> str:
+    """Get Tavily API key from env. Loaded by dotenv at startup."""
+    key = _os.environ.get("TAVILY_API_KEY", "")
+    if not key:
+        # Try loading .env manually as fallback
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            key = _os.environ.get("TAVILY_API_KEY", "")
+        except ImportError:
+            pass
+    return key
+
+
+def _tavily_api(endpoint: str, payload: dict, timeout: int = 15) -> str:
+    """Call a Tavily API endpoint and return the result as formatted text."""
+    api_key = _get_tavily_key()
+    if not api_key:
+        return "Error: TAVILY_API_KEY not set. Add it to .env"
+    payload["api_key"] = api_key
+    try:
+        data = _json.dumps(payload).encode()
+        req = _urllib_request.Request(
+            f"https://api.tavily.com/{endpoint}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with _urllib_request.urlopen(req, timeout=timeout) as resp:
+            result = _json.loads(resp.read().decode())
+            return _truncate(_json.dumps(result, indent=2))
+    except _urllib_error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        return f"HTTP {e.code}: {e.reason} — {body[:200]}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# --- web_search ---
+
+@ollama_tool(
+    description=(
+        "Search the web for information. Returns titles, URLs, and content "
+        "snippets for each result. Use this to look up facts, news, documentation, "
+        "or any information not already known."
+    ),
+    parameters={
+        "query": {
+            "type": "string",
+            "description": "Search query",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum results to return (default: 5, max: 10)",
+        },
+        "search_depth": {
+            "type": "string",
+            "description": "Search depth: 'basic' (fast) or 'advanced' (thorough, slower). Default: basic.",
+        },
+        "include_answer": {
+            "type": "boolean",
+            "description": "Include an AI-generated answer summarizing the results (default: true)",
+        },
+    },
+    required=["query"],
+)
+def web_search(
+    query: str,
+    max_results: int = 5,
+    search_depth: str = "basic",
+    include_answer: bool = True,
+) -> str:
+    return _tavily_api("search", {
+        "query": query,
+        "max_results": min(max_results, 10),
+        "search_depth": search_depth,
+        "include_answer": include_answer,
+    })
+
+
+# --- web_search_news ---
+
+@ollama_tool(
+    description=(
+        "Search for recent news articles. Returns titles, URLs, publish dates, "
+        "and content snippets. Use for current events, recent developments, "
+        "or time-sensitive information."
+    ),
+    parameters={
+        "query": {
+            "type": "string",
+            "description": "News search query",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum results to return (default: 5, max: 10)",
+        },
+    },
+    required=["query"],
+)
+def web_search_news(query: str, max_results: int = 5) -> str:
+    return _tavily_api("search", {
+        "query": query,
+        "max_results": min(max_results, 10),
+        "topic": "news",
+        "search_depth": "basic",
+        "include_answer": False,
+    })
+
+
+# --- web_extract_pages ---
+
+@ollama_tool(
+    description=(
+        "Extract the text content from one or more web page URLs. "
+        "Returns the main content of each page. Good for reading articles, "
+        "documentation, or any web page."
+    ),
+    parameters={
+        "urls": {
+            "type": "string",
+            "description": "URLs to extract, comma-separated (max 5)",
+        },
+    },
+    required=["urls"],
+)
+def web_extract_pages(urls: str) -> str:
+    url_list = [u.strip() for u in urls.split(",") if u.strip()][:5]
+    return _tavily_api("extract", {"urls": url_list})

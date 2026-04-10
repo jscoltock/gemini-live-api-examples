@@ -1,25 +1,30 @@
 
+simplify skill?
 code review tool on this codebase
+
+add upload images and or files
+128k model for qwen and gemma
+make qwen fallback for gemma and vice versa and glm fallback for both
+
 multi-agent? gemini image emailed etc
-keep ollama model in memory
-give local all tools claude code has - twilio and tavily
-show the agent thinking somewhere for complete observability
 add home automation assistant - will a local model work?  Need new tool
 in agent configuation only show Ollama Tools if the Backend is Ollama - dont show if its claude code
 
 make all prompts optimized to use less token by being more concise
 button to show recent output of logs
- have chat pane have full screen toggle
 
-
-add upload images and or files
 have system determine if a local model can do a given task before giving it to a cloud model
 show agent progress so I dont think its hung
 deal with concurrency limits on z.ai models
 add agent that is second brain - infinite memory karpathy or obsidian?
 Don't call gemini at all if not needed (no voice, VAD, images etc)
+test chron jobs
 
-
+x give local all tools claude code has - twilio and tavily
+x have chat pane have full screen toggle
+x telegram
+x show the agent thinking somewhere for complete observability
+x keep ollama model in memory
 x the ollama configuration should be able to handle many tools not just the four we started with
 x clean up project - no need for command line or ephemeral folders
 x give gemma4 more context.
