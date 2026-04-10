@@ -232,6 +232,7 @@ async def websocket_endpoint(websocket: WebSocket):
     video_input_queue = asyncio.Queue()
     text_input_queue = asyncio.Queue()
     notification_queue = asyncio.Queue()
+    file_input_queue = asyncio.Queue()
 
     async def audio_output_callback(data):
         await websocket.send_bytes(data)
@@ -254,6 +255,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"Received image chunk from client: {len(payload['data'])} base64 chars")
                             image_data = base64.b64decode(payload["data"])
                             await video_input_queue.put(image_data)
+                            continue
+                        elif isinstance(payload, dict) and payload.get("type") == "file":
+                            file_data = base64.b64decode(payload["data"])
+                            await file_input_queue.put({
+                                "data": file_data,
+                                "mime_type": payload.get("mime_type", "application/octet-stream"),
+                                "file_name": payload.get("file_name", "unknown"),
+                            })
+                            logger.info(f"Received file from client: {payload.get('file_name')} ({len(file_data)} bytes)")
                             continue
                     except json.JSONDecodeError:
                         pass
@@ -290,6 +300,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     audio_output_callback=audio_output_callback,
                     audio_interrupt_callback=audio_interrupt_callback,
                     notification_queue=notification_queue,
+                    file_input_queue=file_input_queue,
                 ):
                     if event:
                         # Accumulate usage stats before forwarding to client

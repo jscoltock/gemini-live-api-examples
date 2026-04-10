@@ -29,7 +29,7 @@ class GeminiLive:
         self.tools = tools or []
         self.tool_mapping = tool_mapping or {}
 
-    async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None, notification_queue=None):
+    async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None, notification_queue=None, file_input_queue=None):
         import agent_config
         gemini_cfg = agent_config.get_gemini_session()
         system_prompt = gemini_cfg.get("system_prompt", "")
@@ -107,6 +107,90 @@ class GeminiLive:
                     logger.debug("send_notifications task cancelled")
                 except Exception as e:
                     logger.error(f"send_notifications error: {e}\n{traceback.format_exc()}")
+
+            # Text-based extensions we can embed directly
+            _TEXT_EXTS = {".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".sh", ".bash", ".zsh", ".log", ".sql", ".rst", ".tex"}
+
+            async def send_files():
+                """Read files from file_input_queue and send to Gemini."""
+                import os as _os
+                import tempfile
+                try:
+                    while True:
+                        file_msg = await file_input_queue.get()
+                        if file_msg is None:
+                            break
+                        data = file_msg["data"]
+                        mime = file_msg["mime_type"]
+                        fname = file_msg["file_name"]
+                        ext = _os.path.splitext(fname)[1].lower()
+                        size_kb = len(data) / 1024
+                        logger.info(f"Sending file to Gemini: {fname} ({size_kb:.1f} KB, {mime})")
+                        try:
+                            if mime.startswith("image/"):
+                                # Images: send as realtime video frame (same path as camera)
+                                await session.send_realtime_input(
+                                    video=types.Blob(data=data, mime_type=mime)
+                                )
+                                await session.send_realtime_input(
+                                    text=f'The user uploaded an image named "{fname}". Please analyze it.'
+                                )
+                            elif mime.startswith("text/") or ext in _TEXT_EXTS:
+                                # Text files: embed content directly in text message
+                                try:
+                                    content = data.decode("utf-8")
+                                except UnicodeDecodeError:
+                                    content = data.decode("latin-1")
+                                # Truncate very large files
+                                if len(content) > 50000:
+                                    content = content[:50000] + f"\n\n... (truncated, {size_kb:.0f} KB total)"
+                                await session.send_realtime_input(
+                                    text=f'The user uploaded a text file named "{fname}":\n\n{content}'
+                                )
+                            else:
+                                # PDFs and other binary: upload via Files API, then reference
+                                suffix = ext if ext else ".bin"
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                                    tmp.write(data)
+                                    tmp_path = tmp.name
+                                try:
+                                    uploaded = self.client.files.upload(file=tmp_path)
+                                    logger.info(f"Uploaded {fname} to Files API: {uploaded.name}")
+                                    # Poll until active (max 60s)
+                                    for _ in range(60):
+                                        if uploaded.state and uploaded.state.name != "PROCESSING":
+                                            break
+                                        await asyncio.sleep(1)
+                                        uploaded = self.client.files.get(name=uploaded.name)
+                                    if uploaded.state and uploaded.state.name == "ACTIVE":
+                                        await session.send_client_content(
+                                            turns=types.Content(
+                                                role="user",
+                                                parts=[
+                                                    types.Part.from_uri(
+                                                        file_uri=uploaded.uri,
+                                                        mime_type=mime,
+                                                    ),
+                                                    types.Part(text=f'The user uploaded a file named "{fname}". Please analyze it.'),
+                                                ]
+                                            )
+                                        )
+                                    else:
+                                        await event_queue.put({"type": "gemini", "text": f"[File {fname} failed to process: {uploaded.state}]"})
+                                finally:
+                                    _os.unlink(tmp_path)
+                                    try:
+                                        self.client.files.delete(name=uploaded.name)
+                                    except Exception:
+                                        pass
+                            logger.info(f"File {fname} sent to Gemini successfully")
+                        except Exception as e:
+                            logger.error(f"Error sending file {fname}: {e}\n{traceback.format_exc()}")
+                            await event_queue.put({"type": "gemini", "text": f"[Error sending file {fname}: {e}]"})
+                except asyncio.CancelledError:
+                    logger.debug("send_files task cancelled")
+                except Exception as e:
+                    logger.error(f"send_files error: {e}\n{traceback.format_exc()}")
 
             event_queue = asyncio.Queue()
 
@@ -231,6 +315,7 @@ class GeminiLive:
             send_video_task = asyncio.create_task(send_video())
             send_text_task = asyncio.create_task(send_text())
             notification_task = asyncio.create_task(send_notifications()) if notification_queue else None
+            file_task = asyncio.create_task(send_files()) if file_input_queue else None
             receive_task = asyncio.create_task(receive_loop())
 
             try:
@@ -250,6 +335,8 @@ class GeminiLive:
                 send_text_task.cancel()
                 if notification_task:
                     notification_task.cancel()
+                if file_task:
+                    file_task.cancel()
                 receive_task.cancel()
         except Exception as e:
             logger.error(f"Gemini Live session error: {type(e).__name__}: {e}\n{traceback.format_exc()}")

@@ -54,6 +54,17 @@ class GeminiClient {
     );
   }
 
+  sendFile(base64Data, mimeType, fileName) {
+    this.send(
+      JSON.stringify({
+        type: "file",
+        mime_type: mimeType,
+        file_name: fileName,
+        data: base64Data,
+      })
+    );
+  }
+
   disconnect() {
     if (this.websocket) {
       this.websocket.close();

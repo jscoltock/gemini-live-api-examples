@@ -559,10 +559,93 @@ document.getElementById("clearAgentsBtn").onclick = () => {
 function sendText() {
   const text = textInput.value;
   if (text && geminiClient.isConnected()) {
+    // Send any pending files first
+    sendPendingFiles();
     geminiClient.sendText(text);
     appendMessage("user", text);
     textInput.value = "";
   }
+}
+
+// --- File Upload ---
+
+const fileInput = document.getElementById("fileInput");
+const attachBtn = document.getElementById("attachBtn");
+const filePreviewBar = document.getElementById("filePreviewBar");
+let pendingFiles = []; // {file, dataUrl, mimeType, name}
+
+attachBtn.onclick = () => fileInput.click();
+
+fileInput.onchange = () => {
+  for (const file of fileInput.files) {
+    if (pendingFiles.length >= 5) break; // max 5 files
+    const reader = new FileReader();
+    reader.onload = () => {
+      pendingFiles.push({
+        file,
+        dataUrl: reader.result,
+        mimeType: file.type || "application/octet-stream",
+        name: file.name,
+      });
+      renderFilePreview();
+    };
+    reader.readAsDataURL(file);
+  }
+  fileInput.value = ""; // reset so same file can be re-selected
+};
+
+function renderFilePreview() {
+  if (!pendingFiles.length) {
+    filePreviewBar.classList.add("hidden");
+    filePreviewBar.innerHTML = "";
+    return;
+  }
+  filePreviewBar.classList.remove("hidden");
+  filePreviewBar.innerHTML = pendingFiles.map((f, i) => {
+    const isImage = f.mimeType.startsWith("image/");
+    const thumb = isImage
+      ? `<img src="${f.dataUrl}" class="file-thumb" />`
+      : `<span class="file-icon">${f.name.split(".").pop()}</span>`;
+    return `<div class="file-preview-item">
+      ${thumb}
+      <span class="file-name">${escapeHtml(f.name)}</span>
+      <button class="file-remove" data-idx="${i}" title="Remove">&times;</button>
+    </div>`;
+  }).join("");
+
+  // Wire remove buttons
+  filePreviewBar.querySelectorAll(".file-remove").forEach(btn => {
+    btn.onclick = () => {
+      pendingFiles.splice(parseInt(btn.dataset.idx), 1);
+      renderFilePreview();
+    };
+  });
+}
+
+function sendPendingFiles() {
+  if (!geminiClient.isConnected()) return;
+  for (const f of pendingFiles) {
+    // Extract base64 data (strip data:mime;base64, prefix)
+    const base64 = f.dataUrl.split(",")[1];
+    geminiClient.sendFile(base64, f.mimeType, f.name);
+    // Show in chat
+    const isImage = f.mimeType.startsWith("image/");
+    if (isImage) {
+      const msgDiv = document.createElement("div");
+      msgDiv.className = "message user";
+      const img = document.createElement("img");
+      img.src = f.dataUrl;
+      img.style.maxWidth = "200px";
+      img.style.borderRadius = "6px";
+      msgDiv.appendChild(img);
+      chatLog.appendChild(msgDiv);
+    } else {
+      appendMessage("user", `📎 ${f.name}`);
+    }
+  }
+  pendingFiles = [];
+  renderFilePreview();
+  chatLog.scrollTop = chatLog.scrollHeight;
 }
 
 function resetUI() {
