@@ -1,24 +1,21 @@
 Don't call gemini at all if not needed (no voice, VAD, images etc)
 add upload images and or files TEST
-
-
 128k model for qwen and gemma
 make qwen fallback for gemma and vice versa and glm fallback for both
+multi-agent? gemini image emailed etc
+test chron jobs
+
 simplify skill?
 code review tool on this codebase
-multi-agent? gemini image emailed etc
 add home automation assistant - will a local model work?  Need new tool
 in agent configuation only show Ollama Tools if the Backend is Ollama - dont show if its claude code
-
 make all prompts optimized to use less token by being more concise
 button to show recent output of logs
-
 have system determine if a local model can do a given task before giving it to a cloud model
 show agent progress so I dont think its hung
 deal with concurrency limits on z.ai models
 add agent that is second brain - infinite memory karpathy or obsidian?
 
-test chron jobs
 
 x give local all tools claude code has - twilio and tavily
 x have chat pane have full screen toggle
