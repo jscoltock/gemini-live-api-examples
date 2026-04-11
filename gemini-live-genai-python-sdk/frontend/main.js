@@ -679,3 +679,21 @@ function showSessionEnd() {
 restartBtn.onclick = () => {
   resetUI();
 };
+
+// Mobile: handle virtual keyboard resizing
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const onResize = () => {
+    // When keyboard opens, the visible area shrinks.
+    // Adjust body height so nothing gets stuck behind the keyboard.
+    document.documentElement.style.setProperty(
+      "--vh", `${vv.height * 0.01}px`
+    );
+    // Scroll chat to bottom when keyboard appears
+    if (chatLog) {
+      setTimeout(() => { chatLog.scrollTop = chatLog.scrollHeight; }, 50);
+    }
+  };
+  vv.addEventListener("resize", onResize);
+  onResize();
+}

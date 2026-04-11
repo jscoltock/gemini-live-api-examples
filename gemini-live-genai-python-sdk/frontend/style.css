@@ -202,6 +202,7 @@ video {
   cursor: pointer;
   font-weight: 600;
   transition: opacity 0.2s;
+  touch-action: manipulation;
 }
 
 .btn:hover {
@@ -426,6 +427,137 @@ input[type="text"] {
 @media (max-width: 768px) {
   .app-grid {
     grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  /* Remove outer padding, edge-to-edge on phones */
+  body {
+    padding: 0;
+  }
+
+  .container {
+    border-radius: 0;
+    padding: 0.5rem 0.6rem;
+    min-height: 100dvh;
+    box-shadow: none;
+  }
+
+  header {
+    padding: 0.35rem 0.25rem 0.4rem;
+  }
+
+  /* Smaller header text */
+  header h1 {
+    font-size: 0.95rem !important;
+  }
+
+  /* Auth section tighter */
+  .auth-section {
+    padding: 1rem;
+  }
+
+  /* Video container smaller on mobile */
+  .video-container {
+    aspect-ratio: 4/3;
+    margin-bottom: 0.4rem;
+    border-radius: 6px;
+  }
+
+  /* Controls: wrap, bigger tap targets */
+  .controls {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .controls .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.5rem 0.4rem;
+    font-size: 0.7rem;
+  }
+
+  /* Chat fills available space */
+  .center-panel {
+    min-height: 300px;
+  }
+
+  .chat-log {
+    max-height: none;
+    flex: 1;
+  }
+
+  /* Input area: bigger tap targets */
+  .input-area {
+    gap: 0.35rem;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .input-area input[type="text"] {
+    padding: 0.6rem 0.65rem;
+    font-size: 1rem; /* prevents iOS zoom */
+  }
+
+  .input-area .btn {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .attach-btn {
+    padding: 0.5rem !important;
+  }
+
+  /* Agent panel compact */
+  .agent-panel {
+    min-height: 200px;
+  }
+
+  /* Usage panel compact */
+  .usage-body {
+    padding: 0.3rem 0.5rem;
+  }
+
+  .usage-panel {
+    margin-top: 0.35rem;
+  }
+
+  /* File preview bar safe area */
+  .file-preview-bar {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Config panel full-width on mobile */
+  .config-panel {
+    width: 100vw;
+    max-width: 100vw;
+  }
+
+  /* Toast safe area */
+  .config-toast {
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    right: 1rem;
+    left: 1rem;
+    text-align: center;
+  }
+
+  /* Session end section */
+  .session-end-section {
+    padding: 2rem 1rem;
+  }
+
+  /* Messages slightly larger for readability */
+  .message {
+    font-size: 0.85rem;
+    max-width: 88%;
+  }
+
+  /* Fullscreen should use dvh */
+  .center-panel.fullscreen {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .center-panel.fullscreen .input-area {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
   }
 }
 
