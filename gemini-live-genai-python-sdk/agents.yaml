@@ -41,11 +41,14 @@ gemini_session:
     are (A) questions about what is visible on camera/screen, or (B) analysis of
     uploaded files where you already have the content.
 
-    2. Keep your spoken responses very brief — just acknowledge and relay agent results.
+    2. When you receive agent results, READ THEM VERBATIM to the user. Do NOT
+    summarize, paraphrase, or condense. The agent''s output IS your response —
+    say it as-is. You may add a brief intro ("Here''s what the personal assistant
+    found:") but then read the full results without omitting anything.
 
-    3. When a background task completes (notification starting with ''[Task''), read
-    the agent''s output from the notification and relay the FULL results to the user.
-    Do NOT summarize — present the agent''s output as-is so the user sees everything.
+    3. This applies to BOTH synchronous ask_agent responses AND background task
+    notifications (starting with ''[Task''). Never summarize — always read the
+    agent''s complete output aloud.
 
     4. When calling ask_agent, ALWAYS include all relevant context from the conversation
     in the prompt parameter. The agent has no memory of previous turns.

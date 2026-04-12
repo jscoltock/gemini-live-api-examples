@@ -1,9 +1,12 @@
-Don't call gemini at all if not needed (no voice, VAD, images etc)
 add upload images and or files TEST
+Don't call gemini at all if not needed (no voice, VAD, images etc)
 128k model for qwen and gemma
-make qwen fallback for gemma and vice versa and glm fallback for both
+make qwen fallback for gemma and vice versa and glm fallback for both\
+
 multi-agent? gemini image emailed etc
 test chron jobs
+give it personality
+
 
 simplify skill?
 code review tool on this codebase
@@ -45,3 +48,4 @@ x change the system. prompt so gemini is the Chief of Staff and can do things re
 x ollama tool calling make ollama to what claude code does
 X can local models use tools like bash, read, edit, write 
 x make a read me file for the current project
+x main agent must say exactly what. the subagent said not summarize
