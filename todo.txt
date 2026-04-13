@@ -1,5 +1,7 @@
 clean up agent descriptions
 agent response is getting truncated
+install playwright for everyone
+put agent stuff for all llms on right pane
 
 
 
