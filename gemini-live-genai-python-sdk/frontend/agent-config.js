@@ -172,6 +172,11 @@ const AgentConfigUI = (() => {
     const preview = lines.slice(0, 3).join("\n");
     const truncated = lines.length > 3;
 
+    const tools = geminiConfig.tools || [];
+    const toolsText = tools.length > 0
+      ? `<span class="badge badge-info">${tools.length} tool${tools.length > 1 ? "s" : ""}</span>`
+      : '<span style="color:var(--text-secondary)">no direct tools</span>';
+
     card.innerHTML = `
       <div class="config-card-header">
         <span class="config-card-name gemini-label">Gemini Live Session</span>
@@ -187,6 +192,10 @@ const AgentConfigUI = (() => {
         <span class="gemini-prompt-preview-label">System Prompt</span>
         <pre class="gemini-prompt-pre-collapsed">${esc(preview || "(none)")}${truncated ? "\n..." : ""}</pre>
       </div>
+      <div class="config-card-meta" style="margin-top:0.35rem">
+        ${toolsText}
+        ${tools.length > 0 ? `<div class="config-card-tools" style="margin-top:0.25rem">Tools: ${tools.map(t => esc(t)).join(", ")}</div>` : ""}
+      </div>
     `;
 
     card.querySelector(".gemini-edit-btn").addEventListener("click", () => {
@@ -200,6 +209,8 @@ const AgentConfigUI = (() => {
   function renderGeminiForm() {
     const card = document.createElement("div");
     card.className = "config-card gemini-config-card gemini-editing";
+
+    const currentTools = geminiConfig.tools || [];
 
     card.innerHTML = `
       <div class="config-card-header">
@@ -215,9 +226,17 @@ const AgentConfigUI = (() => {
         <label>System Prompt</label>
         <textarea id="geminiPromptEdit" class="tall gemini-prompt-textarea">${esc(geminiConfig.system_prompt || "")}</textarea>
       </div>
+      <div class="form-section-label">Direct Tools</div>
+      <div style="margin-bottom:0.25rem;font-size:0.75rem;color:var(--text-secondary)">Tools the Gemini Live agent can use directly (without routing to a backend agent).</div>
+      <div class="tools-checkboxes" id="geminiToolsCheckboxes">
+        ${OLLAMA_TOOLS.map(t => {
+          const checked = currentTools.includes(t) ? "checked" : "";
+          return `<label class="tool-checkbox"><input type="checkbox" name="gtool_${t}" ${checked} /> ${t}</label>`;
+        }).join("")}
+      </div>
       <div class="form-actions">
         <button type="button" class="btn btn-cancel" id="geminiCancelBtn">Cancel</button>
-        <button type="button" class="btn" id="geminiSaveBtn">Save Prompt</button>
+        <button type="button" class="btn" id="geminiSaveBtn">Save</button>
       </div>
     `;
 
@@ -230,11 +249,18 @@ const AgentConfigUI = (() => {
       const textarea = card.querySelector("#geminiPromptEdit");
       const prompt = textarea.value.trim();
 
+      // Gather tools from checkboxes
+      const tools = [];
+      OLLAMA_TOOLS.forEach(t => {
+        const cb = card.querySelector(`[name="gtool_${t}"]`);
+        if (cb && cb.checked) tools.push(t);
+      });
+
       try {
         const res = await fetch("/api/gemini-config", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ system_prompt: prompt }),
+          body: JSON.stringify({ system_prompt: prompt, tools }),
         });
 
         if (!res.ok) {
@@ -245,7 +271,7 @@ const AgentConfigUI = (() => {
 
         geminiConfig = await res.json();
         editingGemini = false;
-        toast("Gemini system prompt saved", "success");
+        toast("Gemini config saved (reconnect to apply)", "success");
         render();
       } catch (e) {
         toast("Save failed: " + e.message, "error");

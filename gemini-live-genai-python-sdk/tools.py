@@ -14,7 +14,7 @@ import yaml
 from google.genai import types
 
 from task_manager import TaskManager
-from ollama_tools import get_schemas, get_funcs, list_tools as list_ollama_tools
+from ollama_tools import get_schemas, get_funcs, get_tool, list_tools as list_ollama_tools
 
 logger = logging.getLogger(__name__)
 
@@ -515,9 +515,9 @@ bash_tool_declaration = types.FunctionDeclaration(
 ask_agent_declaration = types.FunctionDeclaration(
     name="ask_agent",
     description=(
-        "Send a task to a specialist agent. Runs in the background, returns a task ID immediately. "
-        "You will receive a notification when the agent finishes.\n\n"
-        "If the primary config fails, fallbacks are tried automatically.\n\n"
+        "IMPORTANT: Only use this tool when the user EXPLICITLY names an agent "
+        "(e.g., 'ask coder', 'use the local agent'). For ALL other requests, "
+        "use your direct tools instead. Do NOT use this tool on your own initiative.\n\n"
         "Available agents:\n" + _agent_descriptions
     ),
     parameters_json_schema={
@@ -569,19 +569,63 @@ cancel_task_declaration = types.FunctionDeclaration(
 
 
 # --- Aggregated lists for wiring into GeminiLive ---
+# These are now built dynamically from gemini_session config.
 
-TOOL_DECLARATIONS = [
-    types.Tool(function_declarations=[
+def build_gemini_tools() -> tuple[list, dict]:
+    """Build TOOL_DECLARATIONS and TOOL_MAPPING from agents.yaml config.
+    
+    Always includes the core tools (run_bash, ask_agent, list_tasks, cancel_task).
+    Additionally includes any Ollama tools listed in gemini_session.tools.
+    
+    Returns (TOOL_DECLARATIONS, TOOL_MAPPING).
+    """
+    function_declarations = [
         bash_tool_declaration,
-        ask_agent_declaration,
         list_tasks_declaration,
         cancel_task_declaration,
-    ])
-]
+    ]
+    mapping = {
+        "run_bash": run_bash,
+        "list_tasks": list_tasks,
+        "cancel_task": cancel_task,
+    }
 
-TOOL_MAPPING = {
-    "run_bash": run_bash,
-    "ask_agent": ask_agent,
-    "list_tasks": list_tasks,
-    "cancel_task": cancel_task,
-}
+    # Load gemini_session tools from config
+    try:
+        with open(AGENTS_CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f)
+        session_cfg = cfg.get("gemini_session", {})
+        tool_names = session_cfg.get("tools", [])
+    except Exception as e:
+        logger.warning(f"Could not load gemini_session tools: {e}")
+        tool_names = []
+
+    for name in tool_names:
+        entry = get_tool(name)
+        if not entry:
+            logger.warning(f"Unknown tool '{name}' in gemini_session.tools, skipping")
+            continue
+
+        # Convert Ollama schema to Gemini FunctionDeclaration
+        fn_schema = entry.schema.get("function", {})
+        params = fn_schema.get("parameters", {})
+        
+        decl = types.FunctionDeclaration(
+            name=name,
+            description=fn_schema.get("description", ""),
+            parameters_json_schema=params,
+        )
+        function_declarations.append(decl)
+        mapping[name] = entry.func
+        logger.debug(f"Added Ollama tool '{name}' to Gemini Live declarations")
+
+    # Add ask_agent LAST so Gemini prefers direct tools
+    function_declarations.append(ask_agent_declaration)
+    mapping["ask_agent"] = ask_agent
+
+    declarations = [types.Tool(function_declarations=function_declarations)]
+    logger.info(f"Gemini Live tools: {list(mapping.keys())}")
+    return declarations, mapping
+
+
+TOOL_DECLARATIONS, TOOL_MAPPING = build_gemini_tools()

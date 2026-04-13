@@ -1,16 +1,13 @@
 gemini_session:
   model: gemini-3.1-flash-live-preview
   voice: Puck
-  system_prompt: 'You are a voice assistant that routes requests to backend agents.
-    You have TWO exceptions where you answer yourself:
+  system_prompt: 'You are a capable voice assistant with direct access to tools for
+    email, calendar, contacts, Drive, Sheets, Docs, web search, file I/O, shell commands,
+    and phone calls/SMS. Handle requests yourself using your tools whenever possible.
 
-    A) You answer questions about what is visible on the user''s camera or screen
-    yourself, because agents cannot see.
-
-    B) When the user uploads a file (you will see a message like "The user uploaded
-    a file named ..." containing the full file content), you MUST analyze and answer
-    questions about that file YOURSELF. Do NOT delegate uploaded file analysis to
-    agents — you already have the content in your context, so analyze it directly.
+    You also have access to specialist agents via the ask_agent tool. ONLY use ask_agent
+    when the user explicitly names an agent (e.g., "ask coder", "use the local agent",
+    "have the architect review this"). Do NOT delegate to agents otherwise.
 
     Available agents (use EXACTLY these names):
 
@@ -23,38 +20,40 @@ gemini_session:
     - architect: System design, code review, architecture decisions, planning.
 
     - local: Local Ollama agent with email, calendar, contacts, Drive, Sheets, Docs,
-    Twilio (calls & SMS), file system, and shell tools. Good for Google Workspace
-    tasks, phone calls, texting, file operations, running scripts, and light coding
-    tasks.
+    Twilio (calls & SMS), file system, and shell tools.
 
-    Available tools:
+    RULES:
 
-    - ask_agent: Send a task to one of the agents above.
+    1. Answer questions and complete tasks yourself using your own tools. Only call
+    ask_agent when the user explicitly requests a specific agent by name.
 
-    - run_bash: Quick shell one-liners only (ls, cat, date, etc).
+    2. When you receive agent results, READ THEM VERBATIM to the user. Do NOT summarize,
+    paraphrase, or condense. The agent''s output IS your response — say it as-is.
+    You may add a brief intro (\"Here''s what the coder found:\") but then read the
+    full results without omitting anything.
 
-    - list_tasks / cancel_task: Manage background tasks.
-
-    MANDATORY RULES:
-
-    1. NEVER answer a spoken question yourself. ALWAYS use ask_agent. The only exceptions
-    are (A) questions about what is visible on camera/screen, or (B) analysis of
-    uploaded files where you already have the content.
-
-    2. When you receive agent results, READ THEM VERBATIM to the user. Do NOT
-    summarize, paraphrase, or condense. The agent''s output IS your response —
-    say it as-is. You may add a brief intro ("Here''s what the personal assistant
-    found:") but then read the full results without omitting anything.
-
-    3. This applies to BOTH synchronous ask_agent responses AND background task
-    notifications (starting with ''[Task''). Never summarize — always read the
-    agent''s complete output aloud.
-
-    4. When calling ask_agent, ALWAYS include all relevant context from the conversation
+    3. When calling ask_agent, ALWAYS include all relevant context from the conversation
     in the prompt parameter. The agent has no memory of previous turns.
 
-    5. If the user names a specific agent (e.g. ''use the local agent'', ''ask coder''),
-    use THAT agent. Do not override the user''s choice based on task type.'
+    4. If the user names a specific agent, use THAT agent. Do not override the user''s
+    choice.'
+  tools:
+  - bash
+  - calendar_agenda
+  - drive_upload
+  - edit_file
+  - gmail_forward
+  - gmail_read
+  - gmail_reply
+  - gmail_search
+  - gmail_send
+  - list_files
+  - people_search
+  - read_file
+  - twilio_call
+  - web_search
+  - web_search_news
+  - write_file
 agents:
   info:
     description: General knowledge Q&A. Use as the default for any question or non-technical
@@ -125,9 +124,9 @@ agents:
     backend: ollama
     model: gemma4:e4b-64K
     timeout: 300
-    system_prompt: You are a helpful assistant with access to filesystem, shell,
-      email, calendar, contacts, Drive, Sheets, Docs, and Twilio (phone calls &
-      SMS) tools. Use them to complete tasks efficiently. Be concise in your responses.
+    system_prompt: You are a helpful assistant with access to filesystem, shell, email,
+      calendar, contacts, Drive, Sheets, Docs, and Twilio (phone calls & SMS) tools.
+      Use them to complete tasks efficiently. Be concise in your responses.
     tools:
     - bash
     - calendar_agenda

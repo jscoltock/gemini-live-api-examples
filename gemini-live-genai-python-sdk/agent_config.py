@@ -261,6 +261,10 @@ def reload_agents() -> list[str]:
     ]
 
     names = list(new_agents.keys())
+
+    # Also rebuild Gemini Live tool declarations (includes gemini_session.tools)
+    tools.TOOL_DECLARATIONS, tools.TOOL_MAPPING = tools.build_gemini_tools()
+
     logger.info(f"Hot-reloaded agents: {names}")
     return names
 
@@ -268,18 +272,19 @@ def reload_agents() -> list[str]:
 # --- Gemini Session Config ---
 
 def get_gemini_session() -> dict:
-    """Return the gemini_session config (model, voice, system_prompt)."""
+    """Return the gemini_session config (model, voice, system_prompt, tools)."""
     data = _load_full()
     session = data.get("gemini_session", {})
     return {
         "model": session.get("model", "gemini-3.1-flash-live-preview"),
         "voice": session.get("voice", "Puck"),
         "system_prompt": session.get("system_prompt", "").strip(),
+        "tools": session.get("tools", []),
     }
 
 
 def update_gemini_session(updates: dict) -> dict:
-    """Update gemini_session fields. Only system_prompt is writable for now.
+    """Update gemini_session fields. Writable: system_prompt, tools, voice, model.
     Returns the updated config."""
     data = _load_full()
     if "gemini_session" not in data:
@@ -289,6 +294,23 @@ def update_gemini_session(updates: dict) -> dict:
 
     if "system_prompt" in updates:
         session["system_prompt"] = updates["system_prompt"].strip()
+
+    if "tools" in updates:
+        tools = updates["tools"]
+        if tools is not None:
+            # Validate tool names against registry
+            from ollama_tools import list_tools as list_ollama_tools
+            available = set(list_ollama_tools())
+            unknown = [t for t in tools if t not in available]
+            if unknown:
+                raise ValueError(f"Unknown tool(s): {', '.join(unknown)}. Available: {', '.join(sorted(available))}")
+            session["tools"] = [str(t).strip() for t in tools if str(t).strip()]
+
+    if "voice" in updates:
+        session["voice"] = updates["voice"].strip()
+
+    if "model" in updates:
+        session["model"] = updates["model"].strip()
 
     _save_full(data)
     logger.info("Updated gemini_session config")

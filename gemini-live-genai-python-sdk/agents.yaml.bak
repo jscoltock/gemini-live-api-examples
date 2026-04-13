@@ -1,9 +1,13 @@
 gemini_session:
   model: gemini-3.1-flash-live-preview
   voice: Puck
-  system_prompt: 'You are a voice assistant that routes requests to backend agents.
-    You have ONE exception: you answer questions about what is visible on the user''s
-    camera or screen yourself, because agents cannot see.
+  system_prompt: 'You are a capable voice assistant with direct access to tools for
+    email, calendar, contacts, Drive, Sheets, Docs, web search, file I/O, shell commands,
+    and phone calls/SMS. Handle requests yourself using your tools whenever possible.
+
+    You also have access to specialist agents via the ask_agent tool. ONLY use ask_agent
+    when the user explicitly names an agent (e.g., "ask coder", "use the local agent",
+    "have the architect review this"). Do NOT delegate to agents otherwise.
 
     Available agents (use EXACTLY these names):
 
@@ -15,30 +19,38 @@ gemini_session:
 
     - architect: System design, code review, architecture decisions, planning.
 
-    - local: Local Ollama agent with file and shell tools. Good for quick file operations,
-    running scripts, and light coding tasks.
+    - local: Local Ollama agent with email, calendar, contacts, Drive, Sheets, Docs,
+    Twilio (calls & SMS), file system, and shell tools.
 
-    Available tools:
+    RULES:
 
-    - ask_agent: Send a task to one of the agents above.
+    1. Answer questions and complete tasks yourself using your own tools. Only call
+    ask_agent when the user explicitly requests a specific agent by name.
 
-    - run_bash: Quick shell one-liners only (ls, cat, date, etc).
+    2. When you receive agent results, READ THEM VERBATIM to the user. Do NOT summarize,
+    paraphrase, or condense. The agent''s output IS your response — say it as-is.
+    You may add a brief intro (\"Here''s what the coder found:\") but then read the
+    full results without omitting anything.
 
-    - list_tasks / cancel_task: Manage background tasks.
+    3. When calling ask_agent, ALWAYS include all relevant context from the conversation
+    in the prompt parameter. The agent has no memory of previous turns.
 
-    MANDATORY RULES:
-
-    1. NEVER answer a spoken question yourself. ALWAYS use ask_agent. The only exception
-    is when the user explicitly asks about something visible on their camera or screen
-    (e.g. "what do you see?", "read this text on my screen").
-
-    2. Keep your spoken responses very brief — just acknowledge and relay agent results.
-
-    3. When a background task completes (notification starting with ''[Task''), briefly
-    tell the user the result.
-
-    4. When calling ask_agent, ALWAYS include all relevant context from the conversation
-    in the prompt parameter. The agent has no memory of previous turns.'
+    4. If the user names a specific agent, use THAT agent. Do not override the user''s
+    choice.'
+  tools:
+  - bash
+  - calendar_agenda
+  - drive_upload
+  - edit_file
+  - gmail_search
+  - gmail_send
+  - list_files
+  - people_search
+  - read_file
+  - twilio_call
+  - web_search
+  - web_search_news
+  - write_file
 agents:
   info:
     description: General knowledge Q&A. Use as the default for any question or non-technical
@@ -103,30 +115,47 @@ agents:
       model: qwen3.5:9b-64K
       timeout: 120
   local:
-    description: 'Local Ollama agent with file and shell tool access. Good for quick
-      file operations, running scripts, and light coding tasks that don''t need a
-      full cloud agent.
-
-      '
+    description: Local Ollama agent with file and shell tool access. Good for quick
+      file operations, running scripts, and light coding tasks that don't need a full
+      cloud agent.
     backend: ollama
     model: gemma4:e4b-64K
-
+    timeout: 300
+    system_prompt: You are a helpful assistant with access to filesystem, shell, email,
+      calendar, contacts, Drive, Sheets, Docs, and Twilio (phone calls & SMS) tools.
+      Use them to complete tasks efficiently. Be concise in your responses.
     tools:
-    - read_file
-    - write_file
-    - edit_file
     - bash
-    - list_files
+    - calendar_agenda
+    - calendar_insert
+    - docs_write
+    - drive_list
+    - drive_upload
+    - edit_file
+    - gmail_forward
+    - gmail_read
+    - gmail_reply
+    - gmail_search
+    - gmail_send
+    - gmail_triage
     - grep_files
+    - list_files
+    - people_search
+    - read_file
+    - sheets_append
+    - sheets_read
+    - twilio_call
+    - twilio_list_calls
+    - twilio_list_messages
+    - twilio_sms
+    - web_extract_pages
+    - web_search
+    - web_search_news
+    - write_file
     options:
       temperature: 0
       top_p: 0.85
       repeat_penalty: 1.15
-    timeout: 300
-    system_prompt: 'You are a helpful coding assistant with access to filesystem and
-      shell tools. Use them to complete tasks efficiently. Be concise in your responses.
-
-      '
     fallbacks:
     - backend: ollama
       model: qwen3.5:9b-64K

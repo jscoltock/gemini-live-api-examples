@@ -212,13 +212,17 @@ async def get_gemini_config():
 
 @app.put("/api/gemini-config")
 async def update_gemini_config(data: dict):
-    """Update the Gemini Live session system prompt.
+    """Update the Gemini Live session config (system_prompt, tools, voice, model).
     Changes take effect on the next WebSocket connection."""
     from fastapi.responses import JSONResponse
-    if "system_prompt" not in data:
-        return JSONResponse({"error": "system_prompt is required"}, status_code=400)
-    updated = agent_config.update_gemini_session(data)
-    return updated
+    try:
+        updated = agent_config.update_gemini_session(data)
+        # Rebuild Gemini tool declarations so next WS connection picks up changes
+        import tools
+        tools.TOOL_DECLARATIONS, tools.TOOL_MAPPING = tools.build_gemini_tools()
+        return updated
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.get("/api/models")

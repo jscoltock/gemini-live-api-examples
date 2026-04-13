@@ -111,6 +111,11 @@ def get_funcs(tool_names: list[str]) -> dict[str, Callable]:
     return funcs
 
 
+def get_tool(name: str) -> OllamaToolDef | None:
+    """Return a single OllamaToolDef by name, or None."""
+    return _REGISTRY.get(name)
+
+
 def list_tools() -> list[str]:
     """Return all registered tool names."""
     return sorted(_REGISTRY.keys())
