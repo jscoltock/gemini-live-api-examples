@@ -268,21 +268,36 @@ async def update_chat_model(model_id: str, data: dict):
 
 @app.post("/api/chat")
 async def chat_endpoint(data: dict):
-    """SSE streaming chat endpoint for non-Live models."""
+    """SSE streaming chat endpoint for non-Live models.
+    Creates a primary LLM trace task so the agent pane shows what the model is doing."""
     model_id = data.get("model", "")
     messages = data.get("messages", [])
     if not model_id or not messages:
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "model and messages are required"}, status_code=400)
 
+    # Register a trace task for the primary LLM
+    trace_task = task_manager.register(
+        agent=model_id,
+        command=f"<primary: {model_id}>",
+    )
+
     async def event_stream():
+        full_response = ""
         try:
-            async for chunk in stream_chat(model_id, messages):
-                # SSE format: data: {...}\n\n
+            # First event: send the trace task ID so frontend can create the card
+            yield f"data: {json.dumps({'trace_task_id': trace_task.id, 'primary': True})}\n\n"
+
+            async for chunk in stream_chat(model_id, messages, trace_callback=trace_task.add_trace):
+                full_response += chunk
                 yield f"data: {json.dumps({'content': chunk})}\n\n"
+
+            # Mark trace task as completed
+            task_manager.complete_task(trace_task.id, "completed", output=full_response[:8000])
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
+            task_manager.complete_task(trace_task.id, "failed", output=str(e))
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",

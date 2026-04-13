@@ -771,6 +771,33 @@ input[type="text"] {
   background: #fef7e0;
 }
 
+/* Primary LLM tasks — purple accent to distinguish from sub-agent tasks */
+.agent-task.primary-task.running {
+  border-left-color: #8430ce;
+  background: #f3e8fd;
+}
+.agent-task.primary-task.completed {
+  border-left-color: #7627bb;
+  background: #f1e5fa;
+}
+.agent-task.primary-task.failed,
+.agent-task.primary-task.timed_out {
+  border-left-color: #8430ce;
+  background: #f3e0f5;
+}
+
+.agent-task .task-primary-badge {
+  background: #e8d5f5;
+  color: #7627bb;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  margin-left: 0.4rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .agent-task .task-agent {
   font-weight: 700;
   color: var(--text-primary);

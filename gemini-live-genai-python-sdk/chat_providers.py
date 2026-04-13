@@ -243,22 +243,34 @@ async def _zai_chat_once(messages: list[dict], model: str, tools: list[dict] = N
 # --- Streaming generators ---
 
 
-async def stream_ollama(messages: list[dict], model: str, tools: list[dict] = None):
-    """Stream from local Ollama /api/chat with tool support."""
+async def stream_ollama(messages: list[dict], model: str, tools: list[dict] = None, trace_callback=None):
+    """Stream from local Ollama /api/chat with tool support.
+    trace_callback: optional callable(dict) for observability events."""
     # Tool loop: keep calling until no more tool_calls or max iterations
     if tools:
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            if trace_callback:
+                trace_callback({"type": "thinking", "data": {"content": f"Calling {model} (iteration {iteration + 1})..."}})
+
             data = await _ollama_chat_once(messages, model, tools)
             msg = data.get("message", {})
             messages.append(msg)
 
+            # Check for thinking content alongside tool calls
+            thinking = msg.get("content", "")
+
             tool_calls = msg.get("tool_calls", [])
             if not tool_calls:
                 # Final answer — stream it
-                content = msg.get("content", "")
-                if content:
-                    yield content
+                if thinking:
+                    if trace_callback:
+                        trace_callback({"type": "response", "data": {"content": thinking[:2000]}})
+                    yield thinking
                 return
+
+            # Model produced tool calls — emit thinking if present
+            if thinking and trace_callback:
+                trace_callback({"type": "thinking", "data": {"content": thinking[:2000]}})
 
             # Execute tool calls
             for call in tool_calls:
@@ -271,12 +283,21 @@ async def stream_ollama(messages: list[dict], model: str, tools: list[dict] = No
                     except json.JSONDecodeError:
                         args = {}
 
+                if trace_callback:
+                    trace_callback({"type": "tool_call", "data": {"name": name, "args": args}})
+
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, lambda n=name, a=args: _execute_tool(n, a))
+
+                if trace_callback:
+                    trace_callback({"type": "tool_result", "data": {"name": name, "result": str(result)[:2000]}})
+
                 logger.info(f"Ollama tool call: {name}({json.dumps(args)[:100]}) -> {str(result)[:100]}")
                 yield f"\n[Tool: {name}]\n{result}\n\n"
                 messages.append({"role": "tool", "name": name, "content": str(result)})
 
+        if trace_callback:
+            trace_callback({"type": "error", "data": {"message": "Max tool iterations reached"}})
         yield "\n[Max tool iterations reached]"
 
     else:
@@ -303,21 +324,31 @@ async def stream_ollama(messages: list[dict], model: str, tools: list[dict] = No
                         continue
 
 
-async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None):
-    """Stream from ZAI (OpenAI-compatible) with tool support."""
+async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None, trace_callback=None):
+    """Stream from ZAI (OpenAI-compatible) with tool support.
+    trace_callback: optional callable(dict) for observability events."""
     if tools:
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            if trace_callback:
+                trace_callback({"type": "thinking", "data": {"content": f"Calling {model} (iteration {iteration + 1})..."}})
+
             data = await _zai_chat_once(messages, model, tools)
             choice = data.get("choices", [{}])[0]
             msg = choice.get("message", {})
             messages.append(msg)
 
+            thinking = msg.get("content", "")
+
             tool_calls = msg.get("tool_calls", [])
             if not tool_calls:
-                content = msg.get("content", "")
-                if content:
-                    yield content
+                if thinking:
+                    if trace_callback:
+                        trace_callback({"type": "response", "data": {"content": thinking[:2000]}})
+                    yield thinking
                 return
+
+            if thinking and trace_callback:
+                trace_callback({"type": "thinking", "data": {"content": thinking[:2000]}})
 
             # Execute tool calls
             for call in tool_calls:
@@ -330,8 +361,15 @@ async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None)
                     except json.JSONDecodeError:
                         args = {}
 
+                if trace_callback:
+                    trace_callback({"type": "tool_call", "data": {"name": name, "args": args}})
+
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, lambda n=name, a=args: _execute_tool(n, a))
+
+                if trace_callback:
+                    trace_callback({"type": "tool_result", "data": {"name": name, "result": str(result)[:2000]}})
+
                 logger.info(f"ZAI tool call: {name}({json.dumps(args)[:100]}) -> {str(result)[:100]}")
                 yield f"\n[Tool: {name}]\n{result}\n\n"
                 # OpenAI format tool result
@@ -341,6 +379,8 @@ async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None)
                     "content": str(result),
                 })
 
+        if trace_callback:
+            trace_callback({"type": "error", "data": {"message": "Max tool iterations reached"}})
         yield "\n[Max tool iterations reached]"
 
     else:
@@ -374,7 +414,7 @@ async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None)
                         continue
 
 
-async def stream_chat(model_id: str, messages: list[dict], use_tools: bool = True):
+async def stream_chat(model_id: str, messages: list[dict], use_tools: bool = True, trace_callback=None):
     """Route to the correct provider with tools and system prompt."""
     AVAILABLE_MODELS = _get_available_models()
     cfg = AVAILABLE_MODELS.get(model_id)
@@ -393,10 +433,10 @@ async def stream_chat(model_id: str, messages: list[dict], use_tools: bool = Tru
     tools = _get_tool_schemas() if use_tools else None
 
     if backend == "ollama":
-        async for chunk in stream_ollama(messages, model_name, tools):
+        async for chunk in stream_ollama(messages, model_name, tools, trace_callback=trace_callback):
             yield chunk
     elif backend == "zai":
-        async for chunk in stream_zai(messages, model_name, tools):
+        async for chunk in stream_zai(messages, model_name, tools, trace_callback=trace_callback):
             yield chunk
     else:
         raise ValueError(f"Non-streamable backend: {backend}")

@@ -72,6 +72,34 @@ class TaskManager:
         """Set the notification callback. Called from any thread when a task finishes."""
         self._notify = callback
 
+    def register(self, agent: str, command: str = "", context: dict | None = None) -> Task:
+        """Register a task without starting a background thread.
+        Use for tracking primary LLM requests where the caller manages execution
+        (e.g. SSE streaming for GLM/Qwen). The caller is responsible for updating
+        status and output via complete_task()."""
+        task_id = uuid.uuid4().hex[:8]
+        task = Task(
+            id=task_id,
+            agent=agent,
+            command=command,
+            status="running",
+            context=context or {},
+            attempts=1,
+        )
+        with self._lock:
+            self._tasks[task_id] = task
+        logger.info(f"Registered task {task_id}: agent={agent} (no thread)")
+        return task
+
+    def complete_task(self, task_id: str, status: str, output: str = ""):
+        """Update a registered task's status and output. No notification."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task:
+                task.status = status
+                if output:
+                    task.output = output
+
     def start(self, agent: str, run_list: list[tuple[str, int, str]],
               context: dict | None = None) -> Task:
         """

@@ -230,6 +230,10 @@ async function sendChatMessage(text) {
             currentGeminiMessageDiv.textContent += " [Error: " + chunk.error + "]";
             break;
           }
+          // Create primary LLM task card from trace_task_id
+          if (chunk.trace_task_id) {
+            addAgentTask(chunk.trace_task_id, currentModel, text, true);
+          }
           if (chunk.content) {
             fullResponse += chunk.content;
             currentGeminiMessageDiv.textContent = fullResponse;
@@ -431,20 +435,24 @@ function appendMessage(type, text) {
 
 // --- Agent Panel ---
 
-function addAgentTask(taskId, agent, prompt) {
-  const cfg = agentConfigs[agent] || {};
+function addAgentTask(taskId, agent, prompt, primary = false) {
+  const cfg = primary ? {} : (agentConfigs[agent] || {});
   const meta = [];
+  if (primary) {
+    meta.push("primary");
+  }
   if (cfg.backend) meta.push(cfg.backend);
   if (cfg.model) meta.push(cfg.model);
   if (cfg.timeout) meta.push(`${cfg.timeout}s`);
 
   const card = document.createElement("div");
-  card.className = "agent-task running";
+  card.className = primary ? "agent-task primary-task running" : "agent-task running";
   card.id = `task-${taskId}`;
   card.innerHTML = `
     <div class="task-header" data-task-id="${taskId}">
       <span class="task-agent">${escapeHtml(agent)}</span>
       <span class="task-id">${taskId}</span>
+      ${primary ? '<span class="task-primary-badge">primary</span>' : ''}
       <span class="task-status status-running">running</span>
       <span class="trace-toggle" title="Toggle trace">&#9654;</span>
     </div>
@@ -454,7 +462,7 @@ function addAgentTask(taskId, agent, prompt) {
     <div class="trace-container hidden" id="trace-${taskId}"></div>
   `;
   agentList.prepend(card);
-  agentTasks[taskId] = { element: card, status: "running", startTime: Date.now(), trace: [] };
+  agentTasks[taskId] = { element: card, status: "running", startTime: Date.now(), trace: [], primary: primary };
 
   card.querySelector(".task-header").addEventListener("click", () => {
     const traceEl = document.getElementById(`trace-${taskId}`);
@@ -606,12 +614,14 @@ async function pollTasks() {
       if (!existing || existing.status !== t.status) {
         if (!existing) {
           const card = document.createElement("div");
-          card.className = `agent-task ${t.status}`;
+          const isPrimary = (t.command || "").startsWith("<primary:");
+          card.className = `agent-task ${isPrimary ? "primary-task " : ""}${t.status}`;
           card.id = `task-${t.id}`;
           card.innerHTML = `
             <div class="task-header" data-task-id="${t.id}">
               <span class="task-agent">${t.agent || "unknown"}</span>
               <span class="task-id">${t.id}</span>
+              ${isPrimary ? '<span class="task-primary-badge">primary</span>' : ''}
               <span class="task-status status-${t.status}">${t.status}</span>
               ${(t.trace && t.trace.length) ? '<span class="trace-toggle" title="Toggle trace">&#9654;</span>' : ''}
             </div>
