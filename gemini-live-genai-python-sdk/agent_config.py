@@ -367,6 +367,7 @@ def list_chat_models() -> list[dict]:
             "backend": cfg.get("backend", ""),
             "model": cfg.get("model", model_id),
             "system_prompt": cfg.get("system_prompt", ""),
+            "tools": cfg.get("tools", []),
             "voice": False,
             "interruptible": False,
         })
@@ -385,6 +386,7 @@ def get_chat_model(model_id: str) -> Optional[dict]:
         "backend": cfg.get("backend", ""),
         "model": cfg.get("model", model_id),
         "system_prompt": cfg.get("system_prompt", ""),
+        "tools": cfg.get("tools", []),
     }
 
 
@@ -402,6 +404,8 @@ def update_chat_model(model_id: str, updates: dict) -> Optional[dict]:
         cfg["model"] = updates["model"].strip()
     if "system_prompt" in updates:
         cfg["system_prompt"] = updates["system_prompt"].strip()
+    if "tools" in updates:
+        cfg["tools"] = updates["tools"]
 
     _save_full(data)
     logger.info(f"Updated chat model '{model_id}'")

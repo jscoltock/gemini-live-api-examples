@@ -314,6 +314,7 @@ const AgentConfigUI = (() => {
       <div class="config-card-meta" style="margin-top:0.35rem">
         <span>Backend: <strong>${esc(model.backend)}</strong></span>
         <span>Model: <strong>${esc(model.model)}</strong></span>
+        <span>Tools: <strong>${(model.tools || []).length}</strong></span>
       </div>
       <div class="gemini-prompt-preview">
         <span class="gemini-prompt-preview-label">System Prompt</span>
@@ -332,6 +333,8 @@ const AgentConfigUI = (() => {
   function renderChatModelForm(model) {
     const card = document.createElement("div");
     card.className = "config-card gemini-config-card gemini-editing";
+
+    const currentTools = model.tools || [];
 
     card.innerHTML = `
       <div class="config-card-header">
@@ -353,6 +356,14 @@ const AgentConfigUI = (() => {
         <label>System Prompt</label>
         <textarea id="chatModelPromptEdit" class="tall gemini-prompt-textarea">${esc(model.system_prompt || "")}</textarea>
       </div>
+      <div class="form-section-label">Tools</div>
+      <div style="margin-bottom:0.25rem;font-size:0.75rem;color:var(--text-secondary)">Tools this chat model can use.</div>
+      <div class="tools-checkboxes" id="chatModelToolsCheckboxes">
+        ${OLLAMA_TOOLS.map(t => {
+          const checked = currentTools.includes(t) ? "checked" : "";
+          return `<label class="tool-checkbox"><input type="checkbox" name="cmtool_${t}" ${checked} /> ${t}</label>`;
+        }).join("")}
+      </div>
       <div class="form-actions">
         <button type="button" class="btn btn-cancel" id="chatModelCancelBtn">Cancel</button>
         <button type="button" class="btn" id="chatModelSaveBtn">Save</button>
@@ -369,11 +380,18 @@ const AgentConfigUI = (() => {
       const modelName = card.querySelector("#chatModelName").value.trim();
       const prompt = card.querySelector("#chatModelPromptEdit").value.trim();
 
+      // Gather tools from checkboxes
+      const tools = [];
+      OLLAMA_TOOLS.forEach(t => {
+        const cb = card.querySelector(`[name="cmtool_${t}"]`);
+        if (cb && cb.checked) tools.push(t);
+      });
+
       try {
         const res = await fetch(`/api/chat-models/${encodeURIComponent(model.id)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label, model: modelName, system_prompt: prompt }),
+          body: JSON.stringify({ label, model: modelName, system_prompt: prompt, tools }),
         });
 
         if (!res.ok) {

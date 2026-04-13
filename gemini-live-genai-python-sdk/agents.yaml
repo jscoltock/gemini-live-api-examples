@@ -220,7 +220,7 @@ agents:
       file operations, running scripts, and light coding tasks that don't need a full
       cloud agent.
     backend: ollama
-    model: gemma4:e4b-64K
+    model: qwen3.5:9b-64K
     timeout: 300
     system_prompt: You are a helpful assistant with access to filesystem, shell, email,
       calendar, contacts, Drive, Sheets, Docs, and Twilio (phone calls & SMS) tools.
@@ -259,5 +259,5 @@ agents:
       repeat_penalty: 1.15
     fallbacks:
     - backend: ollama
-      model: qwen3.5:9b-64K
+      model: gemma4:e4b-64K
       timeout: 120
