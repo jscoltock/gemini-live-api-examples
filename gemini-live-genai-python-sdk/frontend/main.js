@@ -17,6 +17,8 @@ const videoPlaceholder = document.getElementById("video-placeholder");
 const connectBtn = document.getElementById("connectBtn");
 const chatLog = document.getElementById("chat-log");
 const agentList = document.getElementById("agent-list");
+const modelSelect = document.getElementById("modelSelect");
+const newChatBtn = document.getElementById("newChatBtn");
 
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
@@ -25,6 +27,46 @@ let agentTasks = {};  // taskId -> {element, status, startTime, trace}
 let agentConfigs = {};  // agent name -> {backend, model, timeout}
 let pollInterval = null;
 let usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: "--" };
+let isStreaming = false; // guard against concurrent SSE requests
+
+// --- Mode state ---
+// 'gemini-live' = WebSocket real-time, 'glm-5.1' or 'qwen3.5:9b-64K' = SSE turn-based
+let currentModel = localStorage.getItem("selected_model") || "gemini-live";
+
+// --- Conversation history (localStorage) ---
+const HISTORY_KEY = "chat_history";
+const MAX_HISTORY = 100;
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+  } catch { return []; }
+}
+
+function saveHistory(messages) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(messages.slice(-MAX_HISTORY)));
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY);
+  chatLog.innerHTML = "";
+  currentGeminiMessageDiv = null;
+  currentUserMessageDiv = null;
+}
+
+function historyToMessages() {
+  // Convert chat history to OpenAI-style messages array for API calls
+  const history = loadHistory();
+  return history.map(m => ({ role: m.role, content: m.content }));
+}
+
+function renderHistory() {
+  chatLog.innerHTML = "";
+  const history = loadHistory();
+  for (const m of history) {
+    appendMessage(m.role === "user" ? "user" : "gemini", m.content);
+  }
+}
 
 // Accumulated totals persist across sessions (localStorage)
 let accumulated = JSON.parse(localStorage.getItem("usage_accumulated") || "null") || {
@@ -39,6 +81,243 @@ function saveAccumulated() {
   localStorage.setItem("usage_accumulated", JSON.stringify(accumulated));
 }
 
+// --- Init model selector ---
+modelSelect.value = currentModel;
+
+// --- Web Speech API (input for non-Live models) ---
+let speechRecognition = null;
+let isListening = false;
+
+function initSpeechRecognition(onResult) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return null;
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "en-US";
+
+  let finalTranscript = "";
+
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalTranscript += t;
+      } else {
+        interim += t;
+      }
+    }
+    // Show interim results in chat as "listening" indicator
+    if (interim) {
+      updateListeningIndicator(interim);
+    }
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    micBtn.textContent = "Start Mic";
+    micBtn.classList.remove("active");
+    removeListeningIndicator();
+    if (finalTranscript.trim()) {
+      onResult(finalTranscript.trim());
+      finalTranscript = "";
+    }
+  };
+
+  recognition.onerror = (e) => {
+    console.warn("SpeechRecognition error:", e.error);
+    isListening = false;
+    micBtn.textContent = "Start Mic";
+    micBtn.classList.remove("active");
+    removeListeningIndicator();
+    if (e.error === "no-speech") return; // silent
+    if (finalTranscript.trim()) {
+      onResult(finalTranscript.trim());
+      finalTranscript = "";
+    }
+  };
+
+  return recognition;
+}
+
+let listeningIndicator = null;
+
+function updateListeningIndicator(text) {
+  if (!listeningIndicator) {
+    listeningIndicator = document.createElement("div");
+    listeningIndicator.className = "message user listening";
+    chatLog.appendChild(listeningIndicator);
+  }
+  listeningIndicator.textContent = "🎤 " + text;
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function removeListeningIndicator() {
+  if (listeningIndicator) {
+    listeningIndicator.remove();
+    listeningIndicator = null;
+  }
+}
+
+// --- SpeechSynthesis (output for non-Live models) ---
+let currentUtterance = null;
+
+function speakText(text) {
+  if (!voiceEnabled) return;
+  window.speechSynthesis.cancel(); // stop any previous
+  currentUtterance = new SpeechSynthesisUtterance(text);
+  currentUtterance.rate = 1.0;
+  currentUtterance.onend = () => { currentUtterance = null; };
+  window.speechSynthesis.speak(currentUtterance);
+}
+
+function stopSpeaking() {
+  window.speechSynthesis.cancel();
+  currentUtterance = null;
+}
+
+// --- SSE Chat for non-Live models ---
+async function sendChatMessage(text) {
+  if (isStreaming) return;
+  isStreaming = true;
+
+  // Add user message to history
+  const history = loadHistory();
+  history.push({ role: "user", content: text });
+  saveHistory(history);
+
+  appendMessage("user", text);
+  textInput.value = "";
+
+  // Create assistant message div
+  currentGeminiMessageDiv = appendMessage("gemini", "");
+  let fullResponse = "";
+
+  try {
+    const messages = history.map(m => ({ role: m.role, content: m.content }));
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: currentModel, messages }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") break;
+        try {
+          const chunk = JSON.parse(data);
+          if (chunk.error) {
+            currentGeminiMessageDiv.textContent += " [Error: " + chunk.error + "]";
+            break;
+          }
+          if (chunk.content) {
+            fullResponse += chunk.content;
+            currentGeminiMessageDiv.textContent = fullResponse;
+            chatLog.scrollTop = chatLog.scrollHeight;
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.error("Chat error:", e);
+    if (currentGeminiMessageDiv) {
+      currentGeminiMessageDiv.textContent += " [Error: " + e.message + "]";
+    }
+  }
+
+  // Save assistant response to history
+  if (fullResponse) {
+    const h = loadHistory();
+    h.push({ role: "assistant", content: fullResponse });
+    saveHistory(h);
+    speakText(fullResponse);
+  }
+
+  currentGeminiMessageDiv = null;
+  usageData.turns = (usageData.turns || 0) + 1;
+  updateUsagePanel();
+  isStreaming = false;
+}
+
+// --- Mode switching ---
+function isLiveMode() {
+  return currentModel === "gemini-live";
+}
+
+function switchModel(newModel) {
+  if (newModel === currentModel) return;
+
+  // Disconnect current session if active
+  if (geminiClient.isConnected()) {
+    geminiClient.disconnect();
+  }
+  stopSpeaking();
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+
+  currentModel = newModel;
+  localStorage.setItem("selected_model", currentModel);
+  modelSelect.value = currentModel;
+
+  // Reset to auth section
+  authSection.classList.remove("hidden");
+  appSection.classList.add("hidden");
+  sessionEndSection.classList.add("hidden");
+  statusDiv.textContent = "Disconnected";
+  statusDiv.className = "status disconnected";
+  connectBtn.disabled = false;
+
+  // Update description based on mode
+  updateAuthDescription();
+}
+
+function updateAuthDescription() {
+  const descBox = authSection.querySelector(".description-box");
+  if (!descBox) return;
+
+  if (isLiveMode()) {
+    descBox.innerHTML = `
+      <h3>Features Enabled:</h3>
+      <ul style="margin: 10px 0 20px 20px">
+        <li><strong>Native Audio:</strong> Low latency voice interaction</li>
+        <li><strong>Multilingual:</strong> Speak in different languages</li>
+      </ul>
+      <p><em>Note: Real-time bidirectional audio with interruptibility.</em></p>
+    `;
+  } else {
+    const label = modelSelect.options[modelSelect.selectedIndex].text;
+    descBox.innerHTML = `
+      <h3>${escapeHtml(label)}</h3>
+      <ul style="margin: 10px 0 20px 20px">
+        <li><strong>Voice Input:</strong> Push-to-talk via browser speech recognition</li>
+        <li><strong>Voice Output:</strong> Browser text-to-speech (enable with Voice button)</li>
+        <li><strong>Text Chat:</strong> Full streaming text responses</li>
+      </ul>
+      <p><em>Turn-based conversation — no interrupting mid-response.</em></p>
+    `;
+  }
+}
+
+// --- MediaHandler & GeminiClient init ---
 const mediaHandler = new MediaHandler();
 const geminiClient = new GeminiClient({
   onOpen: () => {
@@ -47,10 +326,8 @@ const geminiClient = new GeminiClient({
     authSection.classList.add("hidden");
     appSection.classList.remove("hidden");
 
-    // Start polling for task status updates
     pollInterval = setInterval(pollTasks, 2000);
 
-    // Fetch agent configs for display
     fetch("/api/agents").then(r => r.json()).then(agents => {
       agentConfigs = {};
       for (const a of agents) {
@@ -58,19 +335,16 @@ const geminiClient = new GeminiClient({
       }
     }).catch(() => {});
 
-    // Fetch Gemini config (model name) for usage panel
     fetch("/api/gemini-config").then(r => r.json()).then(cfg => {
       usageData.model = cfg.model || "--";
       updateUsagePanel();
     }).catch(() => {});
 
-    // Reset session usage counters (keep accumulated totals)
     usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: usageData.model };
     accumulated._lastInput = 0;
     accumulated._lastOutput = 0;
     updateUsagePanel();
 
-    // Send hidden instruction
     geminiClient.sendText(
       `System: Introduce yourself as a demo of the Gemini Live API.
        Suggest playing with features like the native audio for accents and multilingual support.
@@ -130,17 +404,14 @@ function handleJsonMessage(msg) {
       currentGeminiMessageDiv = appendMessage("gemini", msg.text);
     }
   } else if (msg.type === "tool_call") {
-    // Agent dispatched — create card in agent panel
     if (msg.name === "ask_agent" && msg.args) {
       const result = msg.result || "";
-      // Parse task ID from "Task abc123 started..."
       const match = result.match(/Task (\w+) started/);
       if (match) {
         addAgentTask(match[1], msg.args.agent || "unknown", msg.args.prompt || "");
       }
     }
   } else if (msg.type === "usage") {
-    // Update usage from WebSocket events
     const u = msg.usage || {};
     usageData.prompt_tokens = u.prompt_token_count || usageData.prompt_tokens;
     usageData.response_tokens = u.response_token_count || usageData.response_tokens;
@@ -185,7 +456,6 @@ function addAgentTask(taskId, agent, prompt) {
   agentList.prepend(card);
   agentTasks[taskId] = { element: card, status: "running", startTime: Date.now(), trace: [] };
 
-  // Click handler for toggling trace
   card.querySelector(".task-header").addEventListener("click", () => {
     const traceEl = document.getElementById(`trace-${taskId}`);
     traceEl.classList.toggle("hidden");
@@ -197,7 +467,6 @@ function addAgentTask(taskId, agent, prompt) {
 function updateAgentTask(taskId, status, output) {
   const task = agentTasks[taskId];
   if (!task) {
-    // Task came from poll, create card
     const card = document.createElement("div");
     card.className = `agent-task ${status}`;
     card.id = `task-${taskId}`;
@@ -210,14 +479,12 @@ function updateAgentTask(taskId, status, output) {
   const card = task.element;
   card.className = `agent-task ${status}`;
 
-  // Update status badge
   const statusEl = card.querySelector(".task-status");
   if (statusEl) {
     statusEl.className = `task-status status-${status}`;
     statusEl.textContent = status;
   }
 
-  // Show output if present
   if (output) {
     let outputEl = card.querySelector(".task-output");
     if (!outputEl) {
@@ -228,7 +495,6 @@ function updateAgentTask(taskId, status, output) {
     outputEl.textContent = output.substring(0, 500);
   }
 
-  // Show elapsed time
   const elapsed = Math.round((Date.now() - task.startTime) / 1000);
   const timeEl = card.querySelector(".task-time");
   if (timeEl) {
@@ -248,7 +514,6 @@ function renderTrace(taskId, traceEvents) {
   const traceEl = document.getElementById(`trace-${taskId}`);
   if (!traceEl || !traceEvents || !traceEvents.length) return;
 
-  // Store latest trace for this task
   const task = agentTasks[taskId];
   if (task) task.trace = traceEvents;
 
@@ -305,10 +570,8 @@ function updateUsagePanel() {
   const input = usageData.prompt_tokens || 0;
   const output = usageData.response_tokens || 0;
 
-  // Session cost: $0.30/M input, $2.50/M output (Flash Live rates)
   const sessionCost = (input * 0.30 + output * 2.50) / 1_000_000;
 
-  // Accumulate: usage values are session-running-totals, so delta from last seen
   const dInput = input - (accumulated._lastInput || 0);
   const dOutput = output - (accumulated._lastOutput || 0);
   const dCost = (dInput * 0.30 + dOutput * 2.50) / 1_000_000;
@@ -321,13 +584,12 @@ function updateUsagePanel() {
     saveAccumulated();
   }
 
-  el("usage-model").textContent = usageData.model || "--";
+  el("usage-model").textContent = isLiveMode() ? (usageData.model || "--") : currentModel;
   el("usage-turns").textContent = usageData.turns || 0;
   el("usage-input").textContent = formatNumber(input);
   el("usage-output").textContent = formatNumber(output);
   el("usage-cost").textContent = "$" + sessionCost.toFixed(4);
 
-  // Accumulated totals
   el("usage-total-cost").textContent = "$" + accumulated.totalCost.toFixed(4);
   const since = new Date(accumulated.since);
   el("usage-since").textContent = since.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -339,12 +601,10 @@ async function pollTasks() {
     if (!res.ok) return;
     const tasks = await res.json();
     for (const t of tasks) {
-      // Skip tasks that were explicitly cleared
       if (window._clearedTaskIds && window._clearedTaskIds.has(t.id)) continue;
       const existing = agentTasks[t.id];
       if (!existing || existing.status !== t.status) {
         if (!existing) {
-          // New task from poll — create card with available info
           const card = document.createElement("div");
           card.className = `agent-task ${t.status}`;
           card.id = `task-${t.id}`;
@@ -368,7 +628,6 @@ async function pollTasks() {
           agentList.prepend(card);
           agentTasks[t.id] = { element: card, status: t.status, startTime: Date.now(), trace: t.trace || [] };
 
-          // Click handler for toggling trace
           card.querySelector(".task-header").addEventListener("click", () => {
             const traceEl = document.getElementById(`trace-${t.id}`);
             traceEl.classList.toggle("hidden");
@@ -376,7 +635,6 @@ async function pollTasks() {
             if (toggle) toggle.textContent = traceEl.classList.contains("hidden") ? "\u25B6" : "\u25BC";
           });
 
-          // Render trace if present
           if (t.trace && t.trace.length) {
             renderTrace(t.id, t.trace);
           }
@@ -385,7 +643,6 @@ async function pollTasks() {
         }
       }
 
-      // Always update trace for existing tasks (grows as agent runs)
       if (t.trace && t.trace.length) {
         renderTrace(t.id, t.trace);
       }
@@ -395,43 +652,135 @@ async function pollTasks() {
   }
 }
 
-// Connect Button Handler
+// --- Connect Button Handler ---
 connectBtn.onclick = async () => {
   statusDiv.textContent = "Connecting...";
   connectBtn.disabled = true;
 
-  try {
-    // Initialize audio context on user gesture
-    await mediaHandler.initializeAudio();
-
-    geminiClient.connect();
-  } catch (error) {
-    console.error("Connection error:", error);
-    statusDiv.textContent = "Connection Failed: " + error.message;
-    statusDiv.className = "status error";
+  if (isLiveMode()) {
+    // Original Gemini Live WebSocket connection
+    try {
+      await mediaHandler.initializeAudio();
+      geminiClient.connect();
+    } catch (error) {
+      console.error("Connection error:", error);
+      statusDiv.textContent = "Connection Failed: " + error.message;
+      statusDiv.className = "status error";
+      connectBtn.disabled = false;
+    }
+  } else {
+    // Non-Live model — just show the app section immediately
+    statusDiv.textContent = "Connected";
+    statusDiv.className = "status connected";
+    authSection.classList.add("hidden");
+    appSection.classList.remove("hidden");
     connectBtn.disabled = false;
+
+    usageData = { prompt_tokens: 0, response_tokens: 0, total_tokens: 0, turns: 0, model: currentModel };
+    updateUsagePanel();
+
+    // Start task polling + fetch agent configs (same as Live onOpen)
+    pollInterval = setInterval(pollTasks, 2000);
+    fetch("/api/agents").then(r => r.json()).then(agents => {
+      agentConfigs = {};
+      for (const a of agents) {
+        agentConfigs[a.name] = a;
+      }
+    }).catch(() => {});
+
+    // Render existing history
+    renderHistory();
+
+    // Hide camera/screen buttons for non-Live
+    cameraBtn.style.display = "none";
+    screenBtn.style.display = "none";
   }
 };
 
-// UI Controls
+// --- Model selector ---
+modelSelect.onchange = () => {
+  switchModel(modelSelect.value);
+  updateAuthDescription();
+};
+
+// --- New Chat button ---
+newChatBtn.onclick = () => {
+  clearHistory();
+  usageData.turns = 0;
+  updateUsagePanel();
+  if (!isLiveMode()) {
+    // Nothing else to do, just cleared
+  }
+};
+
+// --- UI Controls ---
 disconnectBtn.onclick = () => {
-  geminiClient.disconnect();
+  if (isLiveMode()) {
+    geminiClient.disconnect();
+  }
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  stopSpeaking();
+  authSection.classList.remove("hidden");
+  appSection.classList.add("hidden");
+  sessionEndSection.classList.add("hidden");
+  statusDiv.textContent = "Disconnected";
+  statusDiv.className = "status disconnected";
+  connectBtn.disabled = false;
+  cameraBtn.style.display = "";
+  screenBtn.style.display = "";
 };
 
 micBtn.onclick = async () => {
-  if (mediaHandler.isRecording) {
-    mediaHandler.stopAudio();
-    micBtn.textContent = "Start Mic";
+  if (isLiveMode()) {
+    // Original Gemini Live mic behavior
+    if (mediaHandler.isRecording) {
+      mediaHandler.stopAudio();
+      micBtn.textContent = "Start Mic";
+    } else {
+      try {
+        await mediaHandler.startAudio((data) => {
+          if (geminiClient.isConnected()) {
+            geminiClient.send(data);
+          }
+        });
+        micBtn.textContent = "Stop Mic";
+      } catch (e) {
+        alert("Could not start audio capture");
+      }
+    }
   } else {
-    try {
-      await mediaHandler.startAudio((data) => {
-        if (geminiClient.isConnected()) {
-          geminiClient.send(data);
+    // Non-Live: Web Speech API push-to-talk
+    if (isListening) {
+      // Stop listening and send what we have
+      if (speechRecognition) {
+        speechRecognition.stop();
+      }
+      return;
+    }
+
+    if (!speechRecognition) {
+      speechRecognition = initSpeechRecognition((transcript) => {
+        if (transcript.trim()) {
+          sendChatMessage(transcript.trim());
         }
       });
-      micBtn.textContent = "Stop Mic";
+    }
+
+    if (!speechRecognition) {
+      alert("Speech recognition not supported in this browser");
+      return;
+    }
+
+    try {
+      isListening = true;
+      micBtn.textContent = "Listening...";
+      micBtn.classList.add("active");
+      speechRecognition.start();
     } catch (e) {
-      alert("Could not start audio capture");
+      console.warn("SpeechRecognition start error:", e);
+      isListening = false;
+      micBtn.textContent = "Start Mic";
+      micBtn.classList.remove("active");
     }
   }
 };
@@ -440,6 +789,9 @@ voiceBtn.onclick = () => {
   voiceEnabled = !voiceEnabled;
   voiceBtn.textContent = voiceEnabled ? "Stop Voice" : "Start Voice";
   voiceBtn.classList.toggle("active", voiceEnabled);
+  if (!voiceEnabled) {
+    stopSpeaking();
+  }
 };
 
 cameraBtn.onclick = async () => {
@@ -449,7 +801,6 @@ cameraBtn.onclick = async () => {
     screenBtn.textContent = "Share Screen";
     videoPlaceholder.classList.remove("hidden");
   } else {
-    // If another stream is active (e.g. Screen), stop it first
     if (mediaHandler.videoStream) {
       mediaHandler.stopVideo(videoPreview);
       screenBtn.textContent = "Share Screen";
@@ -477,7 +828,6 @@ screenBtn.onclick = async () => {
     cameraBtn.textContent = "Start Camera";
     videoPlaceholder.classList.remove("hidden");
   } else {
-    // If another stream is active (e.g. Camera), stop it first
     if (mediaHandler.videoStream) {
       mediaHandler.stopVideo(videoPreview);
       cameraBtn.textContent = "Start Camera";
@@ -492,7 +842,6 @@ screenBtn.onclick = async () => {
           }
         },
         () => {
-          // onEnded callback (e.g. user stopped sharing from browser)
           screenBtn.textContent = "Share Screen";
           videoPlaceholder.classList.remove("hidden");
         }
@@ -511,59 +860,19 @@ textInput.onkeypress = (e) => {
   if (e.key === "Enter") sendText();
 };
 
-// Fullscreen toggle for chat pane
-const centerPanel = document.getElementById("center-panel");
-const fullscreenBtn = document.getElementById("fullscreenBtn");
-const fsExpand = fullscreenBtn.querySelector(".fs-expand");
-const fsContract = fullscreenBtn.querySelector(".fs-contract");
-
-fullscreenBtn.onclick = () => {
-  const isFs = centerPanel.classList.toggle("fullscreen");
-  fsExpand.style.display = isFs ? "none" : "";
-  fsContract.style.display = isFs ? "" : "none";
-  // Scroll chat to bottom after layout settles
-  setTimeout(() => { chatLog.scrollTop = chatLog.scrollHeight; }, 100);
-};
-
-// Escape key exits fullscreen
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && centerPanel.classList.contains("fullscreen")) {
-    centerPanel.classList.remove("fullscreen");
-    fsExpand.style.display = "";
-    fsContract.style.display = "none";
-  }
-});
-
-// Reset accumulated usage totals
-document.getElementById("resetUsageBtn").onclick = () => {
-  accumulated = {
-    totalCost: 0,
-    totalInput: 0,
-    totalOutput: 0,
-    totalTurns: 0,
-    since: new Date().toISOString(),
-  };
-  saveAccumulated();
-  updateUsagePanel();
-};
-
-// Clear agent pane
-document.getElementById("clearAgentsBtn").onclick = () => {
-  const clearedIds = new Set(Object.keys(agentTasks));
-  agentList.innerHTML = "";
-  agentTasks = {};
-  // Skip re-adding these from poll
-  window._clearedTaskIds = new Set([...(window._clearedTaskIds || []), ...clearedIds]);
-};
-
 function sendText() {
   const text = textInput.value;
-  if (text && geminiClient.isConnected()) {
-    // Send any pending files first
-    sendPendingFiles();
-    geminiClient.sendText(text);
-    appendMessage("user", text);
-    textInput.value = "";
+  if (!text) return;
+
+  if (isLiveMode()) {
+    if (geminiClient.isConnected()) {
+      sendPendingFiles();
+      geminiClient.sendText(text);
+      appendMessage("user", text);
+      textInput.value = "";
+    }
+  } else {
+    sendChatMessage(text);
   }
 }
 
@@ -572,13 +881,13 @@ function sendText() {
 const fileInput = document.getElementById("fileInput");
 const attachBtn = document.getElementById("attachBtn");
 const filePreviewBar = document.getElementById("filePreviewBar");
-let pendingFiles = []; // {file, dataUrl, mimeType, name}
+let pendingFiles = [];
 
 attachBtn.onclick = () => fileInput.click();
 
 fileInput.onchange = () => {
   for (const file of fileInput.files) {
-    if (pendingFiles.length >= 5) break; // max 5 files
+    if (pendingFiles.length >= 5) break;
     const reader = new FileReader();
     reader.onload = () => {
       pendingFiles.push({
@@ -591,7 +900,7 @@ fileInput.onchange = () => {
     };
     reader.readAsDataURL(file);
   }
-  fileInput.value = ""; // reset so same file can be re-selected
+  fileInput.value = "";
 };
 
 function renderFilePreview() {
@@ -613,7 +922,6 @@ function renderFilePreview() {
     </div>`;
   }).join("");
 
-  // Wire remove buttons
   filePreviewBar.querySelectorAll(".file-remove").forEach(btn => {
     btn.onclick = () => {
       pendingFiles.splice(parseInt(btn.dataset.idx), 1);
@@ -625,10 +933,8 @@ function renderFilePreview() {
 function sendPendingFiles() {
   if (!geminiClient.isConnected()) return;
   for (const f of pendingFiles) {
-    // Extract base64 data (strip data:mime;base64, prefix)
     const base64 = f.dataUrl.split(",")[1];
     geminiClient.sendFile(base64, f.mimeType, f.name);
-    // Show in chat
     const isImage = f.mimeType.startsWith("image/");
     if (isImage) {
       const msgDiv = document.createElement("div");
@@ -663,6 +969,8 @@ function resetUI() {
   voiceEnabled = false;
   cameraBtn.textContent = "Start Camera";
   screenBtn.textContent = "Share Screen";
+  cameraBtn.style.display = "";
+  screenBtn.style.display = "";
   chatLog.innerHTML = "";
   agentList.innerHTML = "";
   agentTasks = {};
@@ -680,16 +988,53 @@ restartBtn.onclick = () => {
   resetUI();
 };
 
+// Fullscreen toggle for chat pane
+const centerPanel = document.getElementById("center-panel");
+const fullscreenBtn = document.getElementById("fullscreenBtn");
+const fsExpand = fullscreenBtn.querySelector(".fs-expand");
+const fsContract = fullscreenBtn.querySelector(".fs-contract");
+
+fullscreenBtn.onclick = () => {
+  const isFs = centerPanel.classList.toggle("fullscreen");
+  fsExpand.style.display = isFs ? "none" : "";
+  fsContract.style.display = isFs ? "" : "none";
+  setTimeout(() => { chatLog.scrollTop = chatLog.scrollHeight; }, 100);
+};
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && centerPanel.classList.contains("fullscreen")) {
+    centerPanel.classList.remove("fullscreen");
+    fsExpand.style.display = "";
+    fsContract.style.display = "none";
+  }
+});
+
+document.getElementById("resetUsageBtn").onclick = () => {
+  accumulated = {
+    totalCost: 0,
+    totalInput: 0,
+    totalOutput: 0,
+    totalTurns: 0,
+    since: new Date().toISOString(),
+  };
+  saveAccumulated();
+  updateUsagePanel();
+};
+
+document.getElementById("clearAgentsBtn").onclick = () => {
+  const clearedIds = new Set(Object.keys(agentTasks));
+  agentList.innerHTML = "";
+  agentTasks = {};
+  window._clearedTaskIds = new Set([...(window._clearedTaskIds || []), ...clearedIds]);
+};
+
 // Mobile: handle virtual keyboard resizing
 if (window.visualViewport) {
   const vv = window.visualViewport;
   const onResize = () => {
-    // When keyboard opens, the visible area shrinks.
-    // Adjust body height so nothing gets stuck behind the keyboard.
     document.documentElement.style.setProperty(
       "--vh", `${vv.height * 0.01}px`
     );
-    // Scroll chat to bottom when keyboard appears
     if (chatLog) {
       setTimeout(() => { chatLog.scrollTop = chatLog.scrollHeight; }, 50);
     }
@@ -697,3 +1042,6 @@ if (window.visualViewport) {
   vv.addEventListener("resize", onResize);
   onResize();
 }
+
+// --- Init ---
+updateAuthDescription();

@@ -13,6 +13,11 @@
       <header>
         <h1 style="font-size:1.1rem;">Voice API Agent</h1>
         <div style="display: flex; gap: 10px; align-items: center">
+          <select id="modelSelect" class="btn model-select" title="Select model">
+            <option value="gemini-live">Gemini Live</option>
+            <option value="glm-5.1">GLM-5.1</option>
+            <option value="qwen3.5:9b-64K">Qwen 3.5 9B</option>
+          </select>
           <button id="agentConfigBtn" class="btn icon-btn gear-btn" title="Configure Agents">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3"></circle>
@@ -131,7 +136,9 @@
             <div class="center-panel" id="center-panel">
               <div class="center-panel-header">
                 <span class="center-panel-title">Chat</span>
-                <button id="fullscreenBtn" class="btn icon-btn fullscreen-btn" title="Toggle fullscreen">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button id="newChatBtn" class="btn icon-btn" title="New chat" style="font-size:0.75rem;padding:2px 8px;">New Chat</button>
+                  <button id="fullscreenBtn" class="btn icon-btn fullscreen-btn" title="Toggle fullscreen">
                   <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="15 3 21 3 21 9"></polyline>
                     <polyline points="9 21 3 21 3 15"></polyline>
@@ -145,6 +152,7 @@
                     <line x1="3" y1="21" x2="10" y2="14"></line>
                   </svg>
                 </button>
+                </div>
               </div>
               <div class="chat-log" id="chat-log"></div>
               <div class="input-area">

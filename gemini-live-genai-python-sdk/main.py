@@ -7,12 +7,13 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
 from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel, task_manager, AGENTS
 import agent_config
 from ollama_tools import list_tools as list_ollama_tools
+from chat_providers import stream_chat, list_models as list_chat_models
 
 # Load environment variables
 load_dotenv()
@@ -218,6 +219,35 @@ async def update_gemini_config(data: dict):
         return JSONResponse({"error": "system_prompt is required"}, status_code=400)
     updated = agent_config.update_gemini_session(data)
     return updated
+
+
+@app.get("/api/models")
+async def get_models():
+    """Return available models (Live and non-Live) for the UI selector."""
+    return {"models": list_chat_models()}
+
+
+@app.post("/api/chat")
+async def chat_endpoint(data: dict):
+    """SSE streaming chat endpoint for non-Live models."""
+    model_id = data.get("model", "")
+    messages = data.get("messages", [])
+    if not model_id or not messages:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "model and messages are required"}, status_code=400)
+
+    async def event_stream():
+        try:
+            async for chunk in stream_chat(model_id, messages):
+                # SSE format: data: {...}\n\n
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.websocket("/ws")

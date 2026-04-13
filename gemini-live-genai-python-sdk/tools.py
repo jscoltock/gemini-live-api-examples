@@ -107,6 +107,81 @@ def set_notification_channel(loop: asyncio.AbstractEventLoop, queue: asyncio.Que
     task_manager.set_notify(_threadsafe_notify)
 
 
+# --- Synchronous ask_agent for turn-based providers (GLM/Qwen) ---
+
+def ask_agent_sync(agent: str, prompt: str) -> str:
+    """Run an agent synchronously and return the actual result.
+
+    Unlike ask_agent (which is fire-and-forget for Gemini Live's
+    notification channel), this blocks until the agent finishes and
+    returns the output directly. Still registers with TaskManager so
+    the agent pane shows status and trace data.
+    """
+    if agent not in AGENTS:
+        available = ", ".join(AGENTS.keys())
+        return f"Unknown agent '{agent}'. Available: {available}"
+
+    agent_config = AGENTS[agent]
+    system_prompt = agent_config.get("system_prompt", "").strip()
+    tool_names = agent_config.get("tools", [])
+    agent_options = agent_config.get("options")
+    attempts = _get_attempts(agent_config)
+
+    if not attempts:
+        return f"Agent '{agent}' has no available configs (check env vars)."
+
+    # Build the ordered list of (command_or_callable, timeout, label) tuples
+    run_list = []
+    for cfg in attempts:
+        try:
+            backend = cfg.get("backend", "").lower()
+
+            if backend == "ollama" and tool_names:
+                _model = cfg.get("model", "")
+                _timeout = cfg.get("timeout", 120)
+                _tool_names = list(tool_names)
+                _opts = dict(agent_options) if agent_options else None
+                _sp = system_prompt
+
+                def _make_callable(m, sp, p, tn, o, t):
+                    def _run(trace_callback=None):
+                        return run_ollama_agent(m, sp, p, tn, o, t, trace_callback=trace_callback)
+                    return _run
+
+                cmd = _make_callable(_model, _sp, prompt, _tool_names, _opts, _timeout)
+            else:
+                cmd = _build_command(cfg, system_prompt, prompt)
+
+            timeout = cfg.get("timeout", 120)
+            label = f"{cfg.get('backend', '?')}/{cfg.get('model', '?')}"
+            run_list.append((cmd, timeout, label))
+        except Exception as e:
+            logger.warning(f"Skipping config for agent '{agent}': {e}")
+
+    if not run_list:
+        return f"Agent '{agent}' — all configs failed to build commands."
+
+    logger.info(
+        f"ask_agent_sync: agent={agent} attempts={len(run_list)} "
+        f"primary={attempts[0].get('backend','?')}/{attempts[0].get('model','?')} "
+        f"prompt={prompt[:80]}"
+    )
+
+    # Start task in TaskManager so agent pane gets status + trace
+    task = task_manager.start(agent, run_list)
+
+    # Block until the task finishes
+    if task.thread:
+        task.thread.join()
+
+    # Return the actual output
+    result = task.output or "(no output)"
+    max_chars = 8000
+    if len(result) > max_chars:
+        result = result[:max_chars] + f"\n... (truncated, {len(result)} total chars)"
+    return result
+
+
 # --- Tool Implementations ---
 
 def run_bash(command: str) -> str:
