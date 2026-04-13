@@ -112,6 +112,35 @@ chat_models:
       4. If the user names a specific agent, use THAT agent. Do not override the user''s
 
       choice.'
+    tools:
+    - bash
+    - calendar_agenda
+    - calendar_insert
+    - docs_write
+    - drive_list
+    - drive_upload
+    - edit_file
+    - gmail_forward
+    - gmail_read
+    - gmail_reply
+    - gmail_search
+    - gmail_send
+    - gmail_triage
+    - grep_files
+    - list_files
+    - people_search
+    - read_file
+    - sheets_append
+    - sheets_read
+    - twilio_call
+    - twilio_list_calls
+    - twilio_list_messages
+    - twilio_sms
+    - web_extract_pages
+    - web_fetch
+    - web_search
+    - web_search_news
+    - write_file
   qwen3.5:9b-64K:
     label: Qwen 3.5 9B (Ollama)
     backend: ollama
@@ -152,6 +181,35 @@ chat_models:
 
       4. If the user names a specific agent, use THAT agent. Do not override the user''s
       choice.'
+    tools:
+    - bash
+    - calendar_agenda
+    - calendar_insert
+    - docs_write
+    - drive_list
+    - drive_upload
+    - edit_file
+    - gmail_forward
+    - gmail_read
+    - gmail_reply
+    - gmail_search
+    - gmail_send
+    - gmail_triage
+    - grep_files
+    - list_files
+    - people_search
+    - read_file
+    - sheets_append
+    - sheets_read
+    - twilio_call
+    - twilio_list_calls
+    - twilio_list_messages
+    - twilio_sms
+    - web_extract_pages
+    - web_fetch
+    - web_search
+    - web_search_news
+    - write_file
 agents:
   info:
     description: General knowledge Q&A. Use as the default for any question or non-technical
