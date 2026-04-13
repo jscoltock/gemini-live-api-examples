@@ -351,3 +351,58 @@ def _build_agent_config(data: dict) -> dict:
             config["fallbacks"].append(fb_config)
 
     return config
+
+
+# --- Chat Model Config (non-Live models like GLM, Qwen) ---
+
+def list_chat_models() -> list[dict]:
+    """Return all chat model configs as a list of dicts."""
+    data = _load_full()
+    models = data.get("chat_models", {})
+    result = []
+    for model_id, cfg in models.items():
+        result.append({
+            "id": model_id,
+            "label": cfg.get("label", model_id),
+            "backend": cfg.get("backend", ""),
+            "model": cfg.get("model", model_id),
+            "system_prompt": cfg.get("system_prompt", ""),
+            "voice": False,
+            "interruptible": False,
+        })
+    return result
+
+
+def get_chat_model(model_id: str) -> Optional[dict]:
+    """Return a single chat model's config, or None."""
+    data = _load_full()
+    cfg = data.get("chat_models", {}).get(model_id)
+    if not cfg:
+        return None
+    return {
+        "id": model_id,
+        "label": cfg.get("label", model_id),
+        "backend": cfg.get("backend", ""),
+        "model": cfg.get("model", model_id),
+        "system_prompt": cfg.get("system_prompt", ""),
+    }
+
+
+def update_chat_model(model_id: str, updates: dict) -> Optional[dict]:
+    """Update a chat model's config (label, model, system_prompt). Returns updated config or None."""
+    data = _load_full()
+    if model_id not in data.get("chat_models", {}):
+        return None
+
+    cfg = data["chat_models"][model_id]
+
+    if "label" in updates:
+        cfg["label"] = updates["label"].strip()
+    if "model" in updates:
+        cfg["model"] = updates["model"].strip()
+    if "system_prompt" in updates:
+        cfg["system_prompt"] = updates["system_prompt"].strip()
+
+    _save_full(data)
+    logger.info(f"Updated chat model '{model_id}'")
+    return get_chat_model(model_id)

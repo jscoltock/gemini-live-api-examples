@@ -19,8 +19,10 @@ const AgentConfigUI = (() => {
   let OLLAMA_TOOLS = ["read_file", "write_file", "edit_file", "bash"]; // fallback, replaced by API
   let agents = [];
   let geminiConfig = null;
+  let chatModels = [];  // non-Live models (GLM, Qwen)
   let editingName = null; // which agent is currently in form mode (null = none)
   let editingGemini = false; // is the gemini config in edit mode?
+  let editingChatModel = null; // which chat model is in edit mode (null = none)
 
   // --- Panel open/close ---
 
@@ -45,10 +47,11 @@ const AgentConfigUI = (() => {
 
   async function loadAgents() {
     try {
-      const [agentsRes, geminiRes, toolsRes] = await Promise.all([
+      const [agentsRes, geminiRes, toolsRes, chatModelsRes] = await Promise.all([
         fetch("/api/agents"),
         fetch("/api/gemini-config"),
         fetch("/api/ollama-tools"),
+        fetch("/api/chat-models"),
       ]);
       if (!agentsRes.ok) throw new Error("Failed to load agents");
       agents = await agentsRes.json();
@@ -61,8 +64,11 @@ const AgentConfigUI = (() => {
           OLLAMA_TOOLS = toolsData.tools;
         }
       }
+      if (chatModelsRes.ok) {
+        chatModels = await chatModelsRes.json();
+      }
       // Don't wipe editing state on reload — only reset if not editing
-      if (!editingName) render();
+      if (!editingName && !editingChatModel) render();
     } catch (e) {
       listEl.innerHTML = `<div class="config-card"><p style="color:#d93025">Error loading agents: ${e.message}</p></div>`;
     }
@@ -76,6 +82,15 @@ const AgentConfigUI = (() => {
     // Gemini Live config section (read-only)
     if (geminiConfig) {
       listEl.appendChild(renderGeminiConfig());
+    }
+
+    // Chat model config sections (GLM, Qwen, etc.)
+    for (const model of chatModels) {
+      if (editingChatModel === model.id) {
+        listEl.appendChild(renderChatModelForm(model));
+      } else {
+        listEl.appendChild(renderChatModelCard(model));
+      }
     }
 
     if (agents.length === 0 && editingName !== "__new__") {
@@ -273,6 +288,103 @@ const AgentConfigUI = (() => {
         editingGemini = false;
         toast("Gemini config saved (reconnect to apply)", "success");
         render();
+      } catch (e) {
+        toast("Save failed: " + e.message, "error");
+      }
+    });
+
+    return card;
+  }
+
+  function renderChatModelCard(model) {
+    const card = document.createElement("div");
+    card.className = "config-card gemini-config-card";
+
+    const lines = (model.system_prompt || "").split("\n");
+    const preview = lines.slice(0, 3).join("\n");
+    const truncated = lines.length > 3;
+
+    card.innerHTML = `
+      <div class="config-card-header">
+        <span class="config-card-name gemini-label">${esc(model.label || model.id)}</span>
+        <div class="config-card-actions">
+          <button class="chat-model-edit-btn">Edit</button>
+        </div>
+      </div>
+      <div class="config-card-meta" style="margin-top:0.35rem">
+        <span>Backend: <strong>${esc(model.backend)}</strong></span>
+        <span>Model: <strong>${esc(model.model)}</strong></span>
+      </div>
+      <div class="gemini-prompt-preview">
+        <span class="gemini-prompt-preview-label">System Prompt</span>
+        <pre class="gemini-prompt-pre-collapsed">${esc(preview || "(none)")}${truncated ? "\n..." : ""}</pre>
+      </div>
+    `;
+
+    card.querySelector(".chat-model-edit-btn").addEventListener("click", () => {
+      editingChatModel = model.id;
+      render();
+    });
+
+    return card;
+  }
+
+  function renderChatModelForm(model) {
+    const card = document.createElement("div");
+    card.className = "config-card gemini-config-card gemini-editing";
+
+    card.innerHTML = `
+      <div class="config-card-header">
+        <span class="config-card-name gemini-label">${esc(model.label || model.id)}</span>
+        <span class="badge gemini-badge">editing</span>
+      </div>
+      <div class="config-card-meta" style="margin-top:0.35rem;margin-bottom:0.5rem">
+        <span>Backend: <strong>${esc(model.backend)}</strong></span>
+      </div>
+      <div class="form-group">
+        <label>Label</label>
+        <input type="text" id="chatModelLabel" value="${esc(model.label || model.id)}" />
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="chatModelName" value="${esc(model.model || model.id)}" />
+      </div>
+      <div class="form-group">
+        <label>System Prompt</label>
+        <textarea id="chatModelPromptEdit" class="tall gemini-prompt-textarea">${esc(model.system_prompt || "")}</textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-cancel" id="chatModelCancelBtn">Cancel</button>
+        <button type="button" class="btn" id="chatModelSaveBtn">Save</button>
+      </div>
+    `;
+
+    card.querySelector("#chatModelCancelBtn").addEventListener("click", () => {
+      editingChatModel = null;
+      render();
+    });
+
+    card.querySelector("#chatModelSaveBtn").addEventListener("click", async () => {
+      const label = card.querySelector("#chatModelLabel").value.trim();
+      const modelName = card.querySelector("#chatModelName").value.trim();
+      const prompt = card.querySelector("#chatModelPromptEdit").value.trim();
+
+      try {
+        const res = await fetch(`/api/chat-models/${encodeURIComponent(model.id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, model: modelName, system_prompt: prompt }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          toast(data.error || "Save failed", "error");
+          return;
+        }
+
+        editingChatModel = null;
+        toast(`${model.label || model.id} config saved`, "success");
+        await loadAgents();
       } catch (e) {
         toast("Save failed: " + e.message, "error");
       }

@@ -27,14 +27,10 @@ def _get_zai_base():
 
 
 # --- Models ---
+# Loaded dynamically from agents.yaml chat_models section.
+# The hardcoded dict is only a fallback for when yaml is unavailable.
 
-AVAILABLE_MODELS = {
-    "gemini-live": {
-        "label": "Gemini Live",
-        "backend": "gemini-live",
-        "voice": True,
-        "interruptible": True,
-    },
+_AVAILABLE_MODELS_FALLBACK = {
     "glm-5.1": {
         "label": "GLM-5.1",
         "backend": "zai",
@@ -52,12 +48,24 @@ AVAILABLE_MODELS = {
 }
 
 
-def list_models():
-    """Return available models for the UI."""
-    return [
-        {"id": k, **v}
-        for k, v in AVAILABLE_MODELS.items()
-    ]
+def _get_available_models() -> dict:
+    """Load models from agents.yaml, fallback to hardcoded."""
+    try:
+        import agent_config
+        models = {}
+        for m in agent_config.list_chat_models():
+            mid = m["id"]
+            models[mid] = {
+                "label": m.get("label", mid),
+                "backend": m.get("backend", ""),
+                "model": m.get("model", mid),
+                "voice": m.get("voice", False),
+                "interruptible": m.get("interruptible", False),
+                "system_prompt": m.get("system_prompt", ""),
+            }
+        return models if models else _AVAILABLE_MODELS_FALLBACK
+    except Exception:
+        return _AVAILABLE_MODELS_FALLBACK
 
 
 # --- Tool schemas (OpenAI-compatible format) ---
@@ -74,10 +82,15 @@ def _get_tool_schemas():
     return [s for s in schemas if s]
 
 
-def _get_system_prompt():
-    """Get the system prompt from agents.yaml."""
+def _get_system_prompt(model_id: str = None) -> str:
+    """Get the system prompt for a specific model from agents.yaml."""
     try:
         import agent_config
+        if model_id:
+            cfg = agent_config.get_chat_model(model_id)
+            if cfg and cfg.get("system_prompt"):
+                return cfg["system_prompt"]
+        # Fallback to gemini_session system prompt
         cfg = agent_config.get_gemini_session()
         return cfg.get("system_prompt", "")
     except Exception:
@@ -363,6 +376,7 @@ async def stream_zai(messages: list[dict], model: str, tools: list[dict] = None)
 
 async def stream_chat(model_id: str, messages: list[dict], use_tools: bool = True):
     """Route to the correct provider with tools and system prompt."""
+    AVAILABLE_MODELS = _get_available_models()
     cfg = AVAILABLE_MODELS.get(model_id)
     if not cfg:
         raise ValueError(f"Unknown model: {model_id}")
@@ -370,8 +384,8 @@ async def stream_chat(model_id: str, messages: list[dict], use_tools: bool = Tru
     backend = cfg["backend"]
     model_name = cfg.get("model", model_id)
 
-    # Inject system prompt if not already present
-    system_prompt = _get_system_prompt()
+    # Inject model-specific system prompt if not already present
+    system_prompt = _get_system_prompt(model_id)
     if system_prompt and not any(m.get("role") == "system" for m in messages):
         messages = [{"role": "system", "content": system_prompt}] + messages
 

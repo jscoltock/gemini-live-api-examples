@@ -13,7 +13,7 @@ from gemini_live import GeminiLive
 from tools import TOOL_DECLARATIONS, TOOL_MAPPING, set_notification_channel, task_manager, AGENTS
 import agent_config
 from ollama_tools import list_tools as list_ollama_tools
-from chat_providers import stream_chat, list_models as list_chat_models
+from chat_providers import stream_chat
 
 # Load environment variables
 load_dotenv()
@@ -228,7 +228,42 @@ async def update_gemini_config(data: dict):
 @app.get("/api/models")
 async def get_models():
     """Return available models (Live and non-Live) for the UI selector."""
-    return {"models": list_chat_models()}
+    # Build the list: gemini-live first, then chat_models from yaml
+    models = [{
+        "id": "gemini-live",
+        "label": "Gemini Live",
+        "backend": "gemini-live",
+        "voice": True,
+        "interruptible": True,
+    }]
+    models.extend(agent_config.list_chat_models())
+    return {"models": models}
+
+
+@app.get("/api/chat-models")
+async def get_chat_models():
+    """Return all chat model configs for the config UI."""
+    return agent_config.list_chat_models()
+
+
+@app.get("/api/chat-models/{model_id}")
+async def get_chat_model(model_id: str):
+    """Return a single chat model's config."""
+    from fastapi.responses import JSONResponse
+    model = agent_config.get_chat_model(model_id)
+    if not model:
+        return JSONResponse({"error": f"Chat model '{model_id}' not found"}, status_code=404)
+    return model
+
+
+@app.put("/api/chat-models/{model_id}")
+async def update_chat_model(model_id: str, data: dict):
+    """Update a chat model's config (label, model, system_prompt)."""
+    from fastapi.responses import JSONResponse
+    updated = agent_config.update_chat_model(model_id, data)
+    if not updated:
+        return JSONResponse({"error": f"Chat model '{model_id}' not found"}, status_code=404)
+    return updated
 
 
 @app.post("/api/chat")
